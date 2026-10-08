@@ -18,6 +18,7 @@ import redis
 
 from app.collectors.github import GitHubClient
 from app.collectors.providers import build_providers
+from app.collectors.registries import build_registries
 from app.config.settings import Settings, get_settings
 from app.models.database import create_client, ensure_indexes, ping
 from app.services import analysis, jobs
@@ -40,11 +41,13 @@ def heartbeat_loop(settings: Settings, redis_client: Any, stop: threading.Event)
 
 
 def process_available_jobs(settings: Settings, db: Any, github: GitHubClient, stop: threading.Event | None = None,
-                           providers: dict[str, Any] | None = None) -> int:
+                           providers: dict[str, Any] | None = None, registries: dict[str, Any] | None = None) -> int:
     """Run queued jobs until none are left. Returns how many were run."""
     processed = 0
     if providers is None:
         providers = build_providers(settings)
+    if registries is None:
+        registries = build_registries(settings)
     analysis.fail_stale_jobs(db, settings)
     while stop is None or not stop.is_set():
         job = analysis.claim_next_job(db)
@@ -56,7 +59,7 @@ def process_available_jobs(settings: Settings, db: Any, github: GitHubClient, st
             if job is None:
                 break
             logger.info("Running %s job %s for project %s", job["type"], job["_id"], job["project_id"])
-            finished = jobs.run_job(db, settings, providers, job, github)
+            finished = jobs.run_job(db, settings, providers, job, github, registries)
         logger.info("Job %s finished: %s", job["_id"], finished["state"])
         processed += 1
     return processed
@@ -71,14 +74,16 @@ def wait_for_work(redis_client: Any, timeout: int, stop: threading.Event) -> Non
 
 
 def run(settings: Settings, redis_client: Any, db: Any, github: GitHubClient, stop: threading.Event,
-        providers: dict[str, Any] | None = None) -> None:
+        providers: dict[str, Any] | None = None, registries: dict[str, Any] | None = None) -> None:
     poll = max(1, min(settings.worker_heartbeat_seconds, 5))
     if providers is None:
         providers = build_providers(settings)
+    if registries is None:
+        registries = build_registries(settings)
     while not stop.is_set():
         try:
             if ping(db):
-                process_available_jobs(settings, db, github, stop, providers)
+                process_available_jobs(settings, db, github, stop, providers, registries)
             else:
                 logger.warning("MongoDB is not reachable")
         except Exception:  # noqa: BLE001 - keep the worker alive; the job itself records failures

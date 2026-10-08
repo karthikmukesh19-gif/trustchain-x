@@ -2,7 +2,7 @@
 
 Database: `trustchain_x` (configurable through `MONGODB_DB`).
 
-All 35 collections are declared, with their indexes, in
+All 41 collections are declared, with their indexes, in
 `backend/app/models/collections.py`; `ensure_indexes()` creates the indexes at
 start-up and is safe to run repeatedly. **Declared does not mean populated.**
 The "Written from" column says which phase starts writing a collection.
@@ -162,7 +162,7 @@ Indexes: `{snapshot_id: 1}` unique; `{project_id: 1, created_at: -1}`.
 
 Shared across projects: one document per `(ecosystem, package_name, version)`
 that any analysis has resolved, with its `purl`, `source` and
-`first_seen_at` / `last_seen_at`. Registry facts are added in Phase 5.
+`first_seen_at` / `last_seen_at`. Registry facts live in `package_metadata` (Phase 5).
 
 Indexes: `{ecosystem: 1, package_name: 1, version: 1}` unique.
 
@@ -360,6 +360,30 @@ Indexes: `{snapshot_id: 1, match_id: 1}` unique;
 - `code_reachability` gains a second index; the existing one is unchanged.
   No existing document is changed.
 
+### Phase 5 collections — dependency intelligence
+
+Field-level detail, indexes and the history rules are in
+[phase5.md](phase5.md), section 9.
+
+| Collection | Purpose | Key | Written by |
+|---|---|---|---|
+| `dependency_analyses` | One document per analysis run: kind, layers, state, model versions, input digest, summary | `{project_id, kind, created_at:-1}`; `{project_id, snapshot_id, layers, created_at:-1}`; `{project_id, kind, input_digest}` | the three Phase 5 jobs |
+| `dependency_fragility` | Fragility score, factors and metrics per dependency and analysis | `{analysis_id, node_id}` unique | fragility and full analysis |
+| `dependency_health` | Health profile per dependency and analysis | `{analysis_id, node_id}` unique | fragility and full analysis |
+| `graph_risk_analysis` | Exposure classification and graph risk per package and analysis | `{analysis_id, node_id}` unique | graph-risk and full analysis |
+| `predictive_indicators` | One document per indicator, with its evidence | `{analysis_id, node_id, type}` unique | full analysis |
+| `predictions` | Predictive dependency risk per dependency and analysis (declared in Phase 0; two indexes added) | `{analysis_id, node_id}`; `{analysis_id, score:-1}` | full analysis |
+| `package_metadata` | Cached registry answers: latest version, release list with dates, withdrawn and deprecated versions | `{ecosystem, normalized_name}` unique | any job that reads a registry |
+
+Rows are never updated in place: a new analysis writes new rows under a new
+`analysis_id`. `package_metadata` is shared reference data, like
+`vulnerabilities`; it holds public registry facts and no project or user id.
+
+### Other changes in Phase 5
+
+- `analysis_jobs` gains three job types and the state `partial`.
+- No existing collection or document is changed.
+
 ## Collections declared for later phases
 
 | Collection | Purpose | Key fields (planned) | Indexes | Written from |
@@ -371,7 +395,6 @@ Indexes: `{snapshot_id: 1, match_id: 1}` unique;
 | `commits` | Commit metadata | `repository_id`, `sha`, `author`, `committed_at`, changed files | `{repository_id, sha}` unique; `{repository_id, committed_at:-1}` | Phase 8 |
 | `commit_analysis` | Security classification of a commit | `commit_id`, `project_id`, `risk_level`, findings | `{commit_id}` unique; `{project_id, risk_level}` | Phase 9 |
 | `security_events` | Real-time events pushed to the UI | `project_id`, `type`, `severity`, `created_at` | `{project_id, created_at:-1}` | Phase 9 |
-| `predictions` | Predicted risk with confidence | `project_id`, `snapshot_id`, `subject_type`, `subject_id`, `predicted_risk`, `confidence`, model version | `{project_id, snapshot_id, subject_type, subject_id}` | Phase 5 |
 | `trust_scores` | Score history with component scores and weights used | `project_id`, `trust_score`, `risk_score`, `components`, `weights`, `reasons`, `created_at` | `{project_id, created_at:-1}` | Phase 12 |
 | `ai_findings` | Evidence-grounded findings | `project_id`, `snapshot_id`, `finding`, `severity`, `confidence`, `evidence` (ids), `reasoning`, `recommendation` | `{project_id, snapshot_id, severity}` | Phase 10 |
 | `remediation_actions` | Recommended or applied actions | `project_id`, `action`, `status`, `created_at` | `{project_id, created_at:-1}` | Phase 10 |
@@ -389,6 +412,7 @@ Indexes: `{snapshot_id: 1, match_id: 1}` unique;
 - Deleting a project removes the project and its analysis data (jobs,
   snapshots, dependencies, graphs, vulnerability matches and synchronisation
   records, SBOMs with their components and diffs, reachability analyses with
-  their source records, graph and findings). The shared `repositories`,
-  `dependency_versions` and `vulnerabilities` documents and the audit trail
-  are kept.
+  their source records, graph and findings, dependency-intelligence analyses
+  with their rows). The shared `repositories`, `dependency_versions`,
+  `vulnerabilities` and `package_metadata` documents and the audit trail are
+  kept.

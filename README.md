@@ -17,8 +17,9 @@ The project is built in phases (see [docs/roadmap.md](docs/roadmap.md)).
 | **Phase 1 — foundation** | Done, validated in Docker |
 | **Phase 2 — repository and dependency intelligence** | Done, validated in Docker |
 | **Phase 3 — vulnerability intelligence and SBOM foundation** | Done |
-| **Phase 4 — code reachability analysis** | Code complete; see *Verification status* below |
-| Later phases — SBOM repair, fragility, prediction, attack paths, behaviour, AI, scoring, reporting | Not started |
+| **Phase 4 — code reachability analysis** | Done |
+| **Phase 5 — predictive dependency fragility and graph reasoning** | Code complete; see *Verification status* below |
+| Later phases — SBOM repair, candidate-version comparison, attack paths, behaviour, AI, scoring, reporting | Not started |
 
 What works today:
 
@@ -45,6 +46,14 @@ What works today:
   published by a named source), **INFERRED** (derived by a stated rule) or
   **UNKNOWN**. Versions that the files do not determine are shown as
   unresolved, never guessed.
+- **Dependency intelligence**: for every dependency, a *fragility* score
+  (how much rests on it in the dependency graph and how far its installed
+  version is behind its registry's releases), its *exposure* to packages with
+  known vulnerabilities through the graph, evidence-backed *indicators*, and
+  a *predictive dependency risk* that ranks dependencies for attention. Every
+  score is a visible sum of factors; a factor without data is shown as
+  unknown and adds nothing. These are estimates for prioritisation, not
+  predictions of specific vulnerabilities or attacks.
 
 What a vulnerability finding means: the installed version number lies inside
 the versions an advisory publishes as affected. No finding does not mean
@@ -118,60 +127,62 @@ npm test
 
 ## Verification status
 
-Phases 1 to 3 were validated in Docker by the project owner.
+Phases 1 to 4 were validated in Docker by the project owner.
 
-Phase 4 was developed in a sandbox that cannot reach PyPI, the npm registry,
+Phase 5 was developed in a sandbox that cannot reach PyPI, the npm registry,
 Docker Hub, the GitHub API or `api.osv.dev`. This is exactly what was and was
 not executed:
 
 | Check | Result |
 |---|---|
-| Backend test suite (1,049 tests: the 838 from Phases 1–3 and 211 new) | **Passed**, 95 % line+branch coverage. Python 3.13, mongomock 4.3.0, dependencies taken from their GitHub sources |
-| Frontend browser tests (82: 62 existing and 20 new, Playwright + Chromium) | **Passed** against a bundle built with esbuild from the project source |
+| Backend test suite (1,442 tests: the 1,049 from Phases 1–4 and 393 new) | **Passed**, 95 % line+branch coverage. Python 3.13, mongomock 4.3.0, dependencies taken from their GitHub sources |
+| Frontend browser tests (109: 82 existing and 27 new, Playwright + Chromium) | **Passed** against a bundle built with esbuild from the project source. The new tests run the page against API responses recorded from the real backend (`backend/tests/record_ui_fixture.py`) |
 | Frontend TypeScript check | **Passed** for all project source |
-| Analyzer and graph builder on real repositories read from disk: ShadowWatch (38 Python files), FastAPI (1,167), PyMongo (440), pytest (274) | **Passed** — every file parsed; about 2–4 s per repository |
-| Live run: Uvicorn API + worker thread + real Redis + browser, on the real files of `karthikmukesh19-gif/ShadowWatch` (commit `4c8057c`), GitHub and OSV replaced by local stand-ins serving the real repository content and real GitHub advisory records | **Passed** — 34 findings: 0 reachable, 0 not confirmed, 6 unknown (the advisories name no functions), 28 unsupported (npm). MongoDB replaced by mongomock |
-| Independent review of the Phase 4 change by a separate reviewer; the 10 defects it confirmed were fixed, each with a regression test | **Done** |
+| Graph metrics and risk propagation against brute-force reference implementations on random graphs with cycles | **Passed** |
+| Live run: Uvicorn API + worker thread + real Redis + browser, on the real dependency graph of `karthikmukesh19-gif/ShadowWatch` (commit `4c8057c`: 320 packages, 408 relationships), GitHub and OSV replaced by local stand-ins serving the real repository content and real GitHub advisory records, **registries unreachable** | **Passed** — the analysis ends *partial*: structure, exposure and indicators are computed (13 packages with known vulnerabilities, 7 that require one, 11 indirectly exposed), and every version and release-age value is reported as unknown. MongoDB replaced by mongomock |
+| Independent review of the Phase 5 change by a separate reviewer; the 16 findings were addressed, each fix with a regression test | **Done** |
 | `docker compose config` | **Valid** |
-| `docker compose up --build` with the Phase 4 code | **Not run** |
-| Source fetched through the real GitHub API | **Not run** (unreachable from the sandbox) |
+| `docker compose up --build` with the Phase 5 code | **Not run** |
+| Release metadata fetched from the real PyPI and npm registries | **Not run** (unreachable from the sandbox). The clients are tested against stand-ins that follow the registries' documented response shapes; the shapes themselves were not re-checked against the live services |
 | `npm install` / `npm run build` (Vite) | **Not run** |
-| Index creation for the four new collections on the existing MongoDB volume | **Not run** against a real server (tested on mongomock) |
-| Accuracy of the reachability results against a labelled benchmark | **Not measured** |
+| Index creation for the six new collections on the existing MongoDB volume, and document-size behaviour on a real server | **Not run** against a real server (tested on mongomock) |
+| Whether the scores are predictive of anything | **Not evaluated** — see [docs/phase5.md](docs/phase5.md), sections 11 and 12 |
 
-**Before starting Phase 5**, run these and confirm they succeed:
+**Before starting Phase 6**, run these and confirm they succeed:
 
 ```bash
 docker compose up --build -d
 docker compose ps                                   # all five services up, backend and frontend healthy
 
-# backend tests and coverage (expected: 1049 passed, about 95 %)
+# backend tests and coverage (expected: 1442 passed, about 95 %)
 docker run --rm -v "${PWD}/backend:/srv" -w /srv python:3.12-slim sh -c "pip install -q -r requirements-dev.txt && pytest --cov=app"
 
-# frontend (expected: 82 passed)
+# frontend (expected: 109 passed)
 cd frontend && npm install && npm run build && npm run test:install && npm test && cd ..
 ```
 
 Then in the app, open the ShadowWatch project:
 
 1. **Vulnerabilities → Check for vulnerabilities** (needed for the current snapshot).
-2. **Code reachability → Start analysis.** The job should go queued →
-   running → completed. Expect the Python findings (pymongo, python-jose,
-   python-dotenv) as *Unknown* with a path to where the package is used, and
-   the npm findings as *Unsupported*. Open one and follow a source link to GitHub.
-3. **Analyse again**: it should finish quickly and report that the stored
-   source was reused.
+2. **Dependency intelligence → Start analysis.** The job should go queued →
+   running → completed in well under a minute. With the registries reachable
+   the direct dependencies show a latest release with dates, transitive npm
+   packages a latest release without dates, and the overview has no
+   "could not be collected" note. If the job ends *Partial*, its message says
+   for how many packages the registries could not be read.
+3. Expand a row: the factors of both scores add up to the score, and every
+   unknown value is labelled *Unknown* or *assumed* rather than shown as 0.
+4. Open **Risk graph** and tick *Vulnerable*: only packages with a known
+   vulnerability remain.
+5. Run **Code reachability → Start analysis**, return, and **Analyse again**:
+   the page first warns that newer findings exist, and the new analysis is
+   listed under *Changes since the previous analysis*.
 
-The analysis makes one GitHub request per Python file (38 for ShadowWatch).
-Unauthenticated GitHub access allows 60 an hour, so set `GITHUB_TOKEN` in
-`.env`; without it a second repository, or a refresh, fails with
-`RATE_LIMITED` and the time the limit resets. OSV needs no key.
-
-To see a *Reachable* or *Not confirmed* result on a real repository, an
-advisory must name its affected functions. Add an entry to a mapping file and
-point `REACHABILITY_SYMBOL_MAPPINGS_FILE` at it (format in
-[docs/phase4.md](docs/phase4.md)); each entry needs a source URL that
-justifies it.
+The worker makes one HTTPS request per package to `pypi.org` or
+`registry.npmjs.org` (about 320 for ShadowWatch, cached for 24 hours). Only
+package names are sent. To make no such request, set
+`PACKAGE_METADATA_PROVIDERS=` (empty) in `.env`; version and release-age
+factors are then unknown and everything else is still analysed.
 
 ## Layout
 
@@ -191,7 +202,8 @@ scripts/      maintenance scripts (none yet)
 - [Security](docs/security.md) — controls for the platform and for analysing untrusted repositories
 - [Vulnerabilities and SBOM](docs/phase3.md) — providers, normalisation, matching rules, SBOM format, integrity verification, what Phase 3 does not do
 - [Code reachability](docs/phase4.md) — source analysis, call graph, statuses, evidence, limits, what Phase 4 does not do
-- [Database](docs/database.md) — all 35 collections, indexes, and which phase writes each
+- [Dependency intelligence](docs/phase5.md) — fragility metrics, graph model, formulas, evidence labels, limits, what Phase 5 does not claim
+- [Database](docs/database.md) — all 41 collections, indexes, and which phase writes each
 - [API](docs/api.md) — implemented and planned endpoints
 - [Roadmap](docs/roadmap.md) — phases and exit criteria
 
@@ -202,7 +214,8 @@ claim to detect all zero-days or unknown vulnerabilities, to prove that a
 dependency is safe or that an SBOM is complete, to build a complete call
 graph, to decide exploitability from reachability, to know whether a maintainer is malicious, to
 guarantee future CVE prediction or attack success, or to certify a dataset as
-free of poisoning.
+free of poisoning. Its fragility and predictive risk figures are explainable
+rankings; they have not been shown to predict incidents.
 
 ## Licence
 

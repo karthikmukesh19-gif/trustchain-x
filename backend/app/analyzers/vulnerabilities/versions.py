@@ -161,3 +161,23 @@ def same_version(ecosystem: str, left: Any, right: Any) -> bool:
         if ecosystem == "golang":
             a, b = a.removeprefix("v"), b.removeprefix("v")
         return a == b
+
+
+def release_components(ecosystem: str, text: Any) -> tuple[tuple[int, ...], bool]:
+    """(numeric release components, is a pre-release) for measuring how far apart two versions are.
+
+    Raises UnsupportedVersion when the ecosystem has no ordering, the version does not
+    parse, or its components are not comparable position by position (a PEP 440 epoch).
+    """
+    scheme = scheme_name(ecosystem)
+    key = parse(ecosystem, text)
+    if scheme == "pep440":
+        if key.epoch:
+            raise UnsupportedVersion("version uses an epoch; component distances are not meaningful")
+        return tuple(key.release), bool(key.is_prerelease or key.is_devrelease)
+    if scheme == "semver":
+        return tuple(key[0]), key[1] == 0
+    if scheme == "maven-subset":
+        return tuple(key[0]), key[1] < 6
+    raise UnsupportedVersion(f"no version ordering for ecosystem {ecosystem!r}")
+

@@ -254,6 +254,61 @@ class OsvStub:
         return httpx.Response(404, json={"message": "not found"})
 
 
+class RegistryStub:
+    """Programmable PyPI and npm registries. Records every request.
+
+    `packages` maps (ecosystem, name) to {"latest": version, "releases": {version: ISO date or None},
+    "yanked": [versions], "deprecated": [versions]}. The contents are test data, not a copy of the real registries.
+    """
+
+    def __init__(self) -> None:
+        self.requests: list[httpx.Request] = []
+        self.packages: dict[tuple[str, str], dict] = {}
+        self.fail: dict[str, int] = {}                # name fragment -> HTTP status
+        self.error: Exception | None = None
+        self.raw: dict[str, bytes] = {}               # name fragment -> body served as-is
+
+    def add(self, ecosystem: str, name: str, latest: str | None, releases: dict[str, str | None], **extra) -> None:
+        self.packages[(ecosystem, name)] = {"latest": latest, "releases": releases, **extra}
+
+    def calls(self, host: str) -> list[httpx.Request]:
+        return [r for r in self.requests if r.url.host == host]
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        path = request.url.path
+        for fragment, status in self.fail.items():
+            if fragment in path:
+                return httpx.Response(status, json={"message": "simulated"})
+        for fragment, body in self.raw.items():
+            if fragment in path:
+                return httpx.Response(200, content=body, headers={"content-type": "application/json"})
+        if request.url.host == "pypi.org":
+            name = path.removeprefix("/pypi/").removesuffix("/json")
+            package = self.packages.get(("pypi", name))
+            if package is None:
+                return httpx.Response(404, json={"message": "Not Found"})
+            yanked = set(package.get("yanked", []))
+            releases = {version: ([] if moment is None else [{"upload_time_iso_8601": moment, "yanked": version in yanked},
+                                                             {"upload_time_iso_8601": moment.replace("T", "T") , "yanked": version in yanked}])
+                        for version, moment in package["releases"].items()}
+            return httpx.Response(200, json={"info": {"name": name, "version": package["latest"]}, "releases": releases})
+        name = request.url.raw_path.decode().lstrip("/").replace("%2F", "/").replace("%2f", "/")
+        package = self.packages.get(("npm", name))
+        if package is None:
+            return httpx.Response(404, json={"error": "Not found"})
+        compact = "vnd.npm.install-v1" in request.headers.get("accept", "")
+        deprecated = set(package.get("deprecated", []))
+        body: dict = {"name": name, "dist-tags": {"latest": package["latest"]} if package["latest"] else {},
+                      "versions": {version: ({"deprecated": "no longer supported"} if version in deprecated else {})
+                                   for version in package["releases"]}}
+        if not compact:
+            body["time"] = {"created": "2010-01-01T00:00:00.000Z", **{v: m for v, m in package["releases"].items() if m}}
+        return httpx.Response(200, json=body)
+
+
 @pytest.fixture
 def settings():
     return load_settings(TEST_ENV)
@@ -285,14 +340,22 @@ def osv():
 
 
 @pytest.fixture
-def app(settings, mongo, fake_redis, github, osv):
+def registry():
+    return RegistryStub()
+
+
+@pytest.fixture
+def app(settings, mongo, fake_redis, github, osv, registry):
     application = create_app(
         settings,
         mongo_client=mongo,
         redis_client=fake_redis,
         github_transport=httpx.MockTransport(github.handler),
         provider_transport=httpx.MockTransport(osv.handler),
+        registry_transport=httpx.MockTransport(registry.handler),
     )
+    for client in application.state.registries.values():
+        client.sleep = lambda _seconds: None
     application.state.github.sleep = lambda _seconds: None  # no real back-off waits in tests
     for provider in application.state.providers.values():
         provider.sleep = lambda _seconds: None
@@ -340,4 +403,5 @@ def run_worker(app) -> int:
     """Run the worker's job loop once against the application's own database and GitHub client."""
     from app.workers.worker import process_available_jobs
 
-    return process_available_jobs(app.state.settings, app.state.db, app.state.github, providers=app.state.providers)
+    return process_available_jobs(app.state.settings, app.state.db, app.state.github, providers=app.state.providers,
+                                  registries=app.state.registries)

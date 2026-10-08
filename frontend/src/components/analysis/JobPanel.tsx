@@ -10,6 +10,7 @@ const STATE_BADGE = {
   queued: { tone: "neutral", label: "Queued" },
   running: { tone: "warn", label: "Running" },
   completed: { tone: "good", label: "Completed" },
+  partial: { tone: "warn", label: "Partial" },
   failed: { tone: "bad", label: "Failed" },
 } as const;
 
@@ -24,6 +25,11 @@ const STAGE_LABELS: Record<string, string> = {
   GRAPH_BUILDING: "Build graph",
   SYMBOL_MAPPING: "Map symbols",
   REACHABILITY: "Search paths",
+  GRAPH_METRICS: "Measure graph",
+  PACKAGE_METADATA: "Registry metadata",
+  FRAGILITY: "Score fragility",
+  RISK_PROPAGATION: "Trace exposure",
+  PREDICTION: "Indicators",
 };
 
 const JOB_NAMES: Record<string, string> = {
@@ -32,6 +38,9 @@ const JOB_NAMES: Record<string, string> = {
   vulnerability_analysis: "A vulnerability re-match",
   sbom_generation: "An SBOM generation",
   code_reachability_analysis: "A code reachability analysis",
+  dependency_fragility_analysis: "A dependency fragility analysis",
+  graph_risk_analysis: "A graph risk analysis",
+  predictive_dependency_analysis: "A dependency intelligence analysis",
 };
 
 /**
@@ -48,7 +57,7 @@ export function JobPanel({ title, jobs, actions, idle, failureNote, testId }: {
   testId: string;
 }) {
   const { job, activeJob, running, loading, error } = jobs;
-  const badge = job ? STATE_BADGE[job.state] : null;
+  const badge = job ? STATE_BADGE[job.state] ?? { tone: "neutral" as const, label: job.state } : null;
   const stages = job?.stages ?? [];
   const otherJob = activeJob && (!job || activeJob.id !== job.id) ? activeJob : null;
 
@@ -108,6 +117,17 @@ export function JobPanel({ title, jobs, actions, idle, failureNote, testId }: {
               {job.error?.retry_at ? ` · retry after ${formatDateTime(job.error.retry_at)}` : ""}
               {` · ${formatDateTime(job.finished_at)}`}
             </p>
+          </div>
+        </div>
+      )}
+
+      {job && job.state === "partial" && (
+        <div role="status" className="mt-4 flex items-start gap-3 rounded-md bg-warn-soft px-4 py-3 text-sm text-warn" data-testid="job-partial">
+          <FiAlertTriangle className="mt-0.5 shrink-0" aria-hidden />
+          <div>
+            <p className="font-semibold">{job.message}. The analysis finished with part of its input missing.</p>
+            <p className="mt-0.5">{job.error?.message}</p>
+            <p className="mt-1 font-mono text-xs opacity-80">{job.error?.code ?? "PARTIAL"} · {formatDateTime(job.finished_at)}</p>
           </div>
         </div>
       )}

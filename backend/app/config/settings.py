@@ -23,9 +23,11 @@ MIN_SECRET_LENGTH = 32
 
 
 KNOWN_VULNERABILITY_PROVIDERS = ("osv",)
+KNOWN_METADATA_PROVIDERS = ("pypi", "npm")
 
 
-def validate_provider_url(setting: str, value: str, allowed_hosts: tuple[str, ...]) -> str:
+def validate_provider_url(setting: str, value: str, allowed_hosts: tuple[str, ...],
+                          allow_list: str = "VULNERABILITY_ALLOWED_HOSTS") -> str:
     """Accept only a plain https base URL whose host is in the allow-list."""
     value = (value or "").strip().rstrip("/")
     if any(ch.isspace() or ord(ch) < 0x20 for ch in value) or "\\" in value:
@@ -45,7 +47,7 @@ def validate_provider_url(setting: str, value: str, allowed_hosts: tuple[str, ..
         raise ValueError(f"{setting} must use the default https port")
     host = (parts.hostname or "").lower()
     if not host or host not in allowed_hosts:
-        raise ValueError(f"{setting} host {host or '(none)'!r} is not in VULNERABILITY_ALLOWED_HOSTS")
+        raise ValueError(f"{setting} host {host or '(none)'!r} is not in {allow_list}")
     return f"https://{host}{parts.path.rstrip('/')}"
 
 
@@ -118,6 +120,22 @@ class Settings(BaseModel):
     # Operator-maintained mapping of advisories to affected functions. Empty by default; never a URL.
     reachability_symbol_mappings_file: str = ""
 
+    # Dependency intelligence (fragility, graph risk, predictive indicators). Release metadata comes from package
+    # registries whose URLs are fixed here and whose hosts must be in the allow-list; an empty provider list turns
+    # the lookups off, and version and release-age factors are then reported as unknown.
+    package_metadata_providers: tuple[str, ...] = ("pypi", "npm")
+    package_metadata_allowed_hosts: tuple[str, ...] = ("pypi.org", "registry.npmjs.org")
+    pypi_api_url: str = "https://pypi.org"
+    npm_registry_url: str = "https://registry.npmjs.org"
+    package_metadata_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    package_metadata_max_bytes: int = Field(default=16_777_216, ge=1024)        # one registry answer (16 MiB)
+    package_metadata_ttl_hours: int = Field(default=24, ge=0)                    # how long a cached answer is reused
+    package_metadata_max_packages: int = Field(default=2000, ge=0)               # registry lookups per analysis
+    intelligence_max_nodes: int = Field(default=5000, ge=10)                     # packages in an analysed graph
+    intelligence_max_edges: int = Field(default=50_000, ge=10)
+    intelligence_timeout_seconds: int = Field(default=600, ge=5)
+    intelligence_history_limit: int = Field(default=50, ge=2)                    # analyses kept per project and kind
+
     @field_validator("app_env")
     @classmethod
     def _known_env(cls, value: str) -> str:
@@ -157,15 +175,28 @@ class Settings(BaseModel):
             raise ValueError(f"VULNERABILITY_PROVIDERS contains unknown provider(s): {', '.join(unknown)}")
         return value
 
-    @field_validator("vulnerability_allowed_hosts")
+    @field_validator("vulnerability_allowed_hosts", "package_metadata_allowed_hosts")
     @classmethod
     def _lower_hosts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(v.lower() for v in value)
+
+    @field_validator("package_metadata_providers")
+    @classmethod
+    def _known_metadata_providers(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        value = tuple(v.lower() for v in value)
+        unknown = [v for v in value if v not in KNOWN_METADATA_PROVIDERS]
+        if unknown:
+            raise ValueError(f"PACKAGE_METADATA_PROVIDERS contains unknown provider(s): {', '.join(unknown)}")
+        return value
 
     @model_validator(mode="after")
     def _provider_urls_are_safe(self) -> "Settings":
         if "osv" in self.vulnerability_providers:
             object.__setattr__(self, "osv_api_url", validate_provider_url("OSV_API_URL", self.osv_api_url, self.vulnerability_allowed_hosts))
+        for provider, field_name, setting in (("pypi", "pypi_api_url", "PYPI_API_URL"), ("npm", "npm_registry_url", "NPM_REGISTRY_URL")):
+            if provider in self.package_metadata_providers:
+                object.__setattr__(self, field_name, validate_provider_url(
+                    setting, getattr(self, field_name), self.package_metadata_allowed_hosts, "PACKAGE_METADATA_ALLOWED_HOSTS"))
         return self
 
     @property
@@ -227,6 +258,16 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         "REACHABILITY_MAX_EDGES": "reachability_max_edges",
         "REACHABILITY_TIMEOUT_SECONDS": "reachability_timeout_seconds",
         "REACHABILITY_SYMBOL_MAPPINGS_FILE": "reachability_symbol_mappings_file",
+        "PYPI_API_URL": "pypi_api_url",
+        "NPM_REGISTRY_URL": "npm_registry_url",
+        "PACKAGE_METADATA_TIMEOUT_SECONDS": "package_metadata_timeout_seconds",
+        "PACKAGE_METADATA_MAX_BYTES": "package_metadata_max_bytes",
+        "PACKAGE_METADATA_TTL_HOURS": "package_metadata_ttl_hours",
+        "PACKAGE_METADATA_MAX_PACKAGES": "package_metadata_max_packages",
+        "INTELLIGENCE_MAX_NODES": "intelligence_max_nodes",
+        "INTELLIGENCE_MAX_EDGES": "intelligence_max_edges",
+        "INTELLIGENCE_TIMEOUT_SECONDS": "intelligence_timeout_seconds",
+        "INTELLIGENCE_HISTORY_LIMIT": "intelligence_history_limit",
         "OSV_API_URL": "osv_api_url",
         "VULNERABILITY_TIMEOUT_SECONDS": "vulnerability_timeout_seconds",
         "VULNERABILITY_BATCH_SIZE": "vulnerability_batch_size",
@@ -243,6 +284,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if "VULNERABILITY_PROVIDERS" in env:
         # An explicitly empty value disables vulnerability intelligence.
         values["vulnerability_providers"] = _split(env["VULNERABILITY_PROVIDERS"])
+    if "PACKAGE_METADATA_PROVIDERS" in env:
+        # An explicitly empty value turns registry lookups off.
+        values["package_metadata_providers"] = _split(env["PACKAGE_METADATA_PROVIDERS"])
+    if env.get("PACKAGE_METADATA_ALLOWED_HOSTS", "").strip():
+        values["package_metadata_allowed_hosts"] = _split(env["PACKAGE_METADATA_ALLOWED_HOSTS"])
     if env.get("VULNERABILITY_ALLOWED_HOSTS", "").strip():
         values["vulnerability_allowed_hosts"] = _split(env["VULNERABILITY_ALLOWED_HOSTS"])
     if env.get("GITHUB_TOKEN", "").strip():

@@ -16,6 +16,7 @@ const STATE_BADGE = {
   queued: { tone: "neutral", label: "Queued" },
   running: { tone: "warn", label: "Running" },
   completed: { tone: "good", label: "Completed" },
+  partial: { tone: "warn", label: "Partial" },
   failed: { tone: "bad", label: "Failed" },
 } as const;
 

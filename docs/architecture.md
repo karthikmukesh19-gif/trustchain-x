@@ -208,6 +208,25 @@ every vulnerability match decides `REACHABLE`, `NOT_CONFIRMED_REACHABLE`,
 Static reachability is not exploitability. Details are in
 [phase4.md](phase4.md).
 
+**Built (Phase 5)** — three further job types that share one pipeline:
+
+```text
+dependency_fragility_analysis    GRAPH_METRICS → PACKAGE_METADATA → FRAGILITY
+graph_risk_analysis              GRAPH_METRICS → RISK_PROPAGATION
+predictive_dependency_analysis   GRAPH_METRICS → PACKAGE_METADATA → FRAGILITY
+                                 → RISK_PROPAGATION → PREDICTION
+```
+
+The worker measures the stored dependency graph, reads release metadata from
+the configured package registries (PyPI and npm; cached), and combines both
+with the stored vulnerability matches and reachability findings into a
+fragility score, an exposure classification with graph risk, indicators and a
+predictive dependency risk per dependency. All of it is deterministic and
+stored with its factors and model versions; each run is kept as history. A
+job may end `partial` when registry metadata is incomplete. The analyzers in
+`analyzers/graph` and `analyzers/fragility` are pure; `collectors/registries`
+is the only new outbound connection. Details are in [phase5.md](phase5.md).
+
 **Target (later phases)** — the full pipeline extends the same job system
 with these stages, and pushes transitions over `/ws/projects/{project_id}`
 from Phase 9:
@@ -286,7 +305,10 @@ The platform **estimates, ranks, simulates and flags indicators**. It does not
 claim to detect all zero-days, to know whether a maintainer is malicious, to
 guarantee future CVE prediction, to guarantee attack success, or to certify a
 dataset as free of poisoning. Every model ships with documented features,
-training process, baseline, metrics and limitations (`docs/ml.md`, Phase 5+).
+formulas, baseline, metrics and limitations. The Phase 5 models are
+deterministic weighted sums documented in [phase5.md](phase5.md); nothing is
+trained yet, and a trained model would add `docs/ml.md` with its training
+process and evaluation.
 
 ---
 

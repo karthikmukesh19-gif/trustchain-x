@@ -17,7 +17,6 @@ import { formatCount, formatDate, formatDateTime, formatSize } from "../utils/fo
 
 /** Evidence layers that later phases will add to this page. None of them exist yet. */
 const PLANNED_ANALYSIS: { name: string; phase: number | null }[] = [
-  { name: "Dependency fragility and predicted risk", phase: 5 },
   { name: "Attack-path simulation", phase: 7 },
   { name: "Maintainer and commit behaviour", phase: 8 },
   { name: "Cross-layer AI reasoning", phase: 10 },
@@ -232,9 +231,10 @@ export function ProjectDetailPage() {
       <section className="card mt-6 p-5">
         <h2 className="text-base font-semibold">Not yet available</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted">
-          Dependency analysis, vulnerability matching, static code reachability (Python) and SBOMs are available from the
-          tabs above. How likely exploitation is, and any risk or trust figure, are not assessed: the parts of the platform
-          that would produce them have not been built.
+          Dependency analysis, vulnerability matching, static code reachability (Python), dependency intelligence and SBOMs
+          are available from the tabs above. Dependency intelligence ranks dependencies for attention; it does not predict
+          specific vulnerabilities or attacks. How likely exploitation is, and any trust score, are not assessed: the parts
+          of the platform that would produce them have not been built.
         </p>
         <ol className="mt-4 divide-y divide-line border-t border-line">
           {PLANNED_ANALYSIS.map((item) => (

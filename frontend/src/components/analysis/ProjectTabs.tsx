@@ -8,6 +8,7 @@ export function ProjectTabs({ projectId }: { projectId: string }) {
     { to: `/projects/${projectId}/graph`, label: "Dependency graph", end: false },
     { to: `/projects/${projectId}/vulnerabilities`, label: "Vulnerabilities", end: false },
     { to: `/projects/${projectId}/reachability`, label: "Code reachability", end: false },
+    { to: `/projects/${projectId}/fragility`, label: "Dependency intelligence", end: false },
     { to: `/projects/${projectId}/sbom`, label: "SBOM", end: false },
   ];
   return (

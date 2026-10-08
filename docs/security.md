@@ -61,11 +61,26 @@ Every repository is untrusted input.
 | Authorisation | Findings, paths and source inventories are scoped to the owning project; another user's ids answer 404 |
 | Abuse of GitHub quota | Job starts are rate limited; parsed source is reused for a snapshot, so re-runs make no GitHub requests |
 
+## Dependency intelligence (Phase 5)
+
+| Threat | Control |
+|---|---|
+| Server-side request forgery | The registry URLs are configuration, `https` only, on hosts listed in `PACKAGE_METADATA_ALLOWED_HOSTS`; an invalid value stops start-up. Requests cannot name a URL (the start routes accept no fields). Redirects are not followed |
+| Hostile package names | Names come from repository content. Each is validated against the registry's name grammar and sent as one percent-encoded path segment; anything else is counted as invalid and never requested |
+| Hostile registry answers | Size cap, JSON only, every field type-checked and bounded; at most 5,000 versions kept; version numbers too large to be real are not measured. The cache is keyed by ecosystem and name, so one project's dependencies cannot change what another project is told about a different package |
+| Resource exhaustion | Limits on graph nodes and edges, registry lookups per run, run time, stored paths and listed sources. Iterative graph algorithms; a failing registry stops being asked after five consecutive failures |
+| Code execution | This phase reads no repository source and runs nothing from it |
+| Authorisation | Every route is scoped to the owning project; rows are read by analysis and project together; foreign and malformed ids answer 404 |
+| Data sent to third parties | Public package names only, to PyPI and npm. No token or repository content. Can be switched off with an empty `PACKAGE_METADATA_PROVIDERS` |
+| Misleading results | Unknown is `null` with a reason, never zero; a missing analysis is "not available"; an undecided reachability is never counted as "not reachable"; scores carry their model version and the statement that they are not probabilities |
+
 ## Known gaps
 
 - Rate-limit counters are per backend process (Redis-backed counters: Phase 14).
 - SBOMs are not cryptographically signed.
 - The reachability analysis has not been measured against a labelled benchmark; see its limitations in phase4.md.
+- The fragility and predictive risk models are stated heuristics; they have not been evaluated against historical incidents (phase5.md, section 11).
+- Registry answers are trusted as published over TLS; they are not cross-checked against a second source.
 - One vulnerability source; no scheduled refresh of advisory data.
 - No token revocation list; tokens are short-lived.
 - The browser stores the token in `sessionStorage`; a strict CSP limits the XSS exposure.

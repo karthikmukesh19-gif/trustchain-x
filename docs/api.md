@@ -183,6 +183,38 @@ confidence are defined in [phase4.md](phase4.md).
 Deleting a project also deletes its reachability analyses, source records,
 graph and findings.
 
+## Implemented (Phase 5) — dependency intelligence
+
+All routes require the project's owner; any other caller gets 404. The start
+routes take no parameters. Scores are returned with their factors and model
+version; none is a probability or the trust score.
+
+| Method | Path | Result |
+|---|---|---|
+| POST | `/api/projects/{id}/fragility/analyze` | 202 `{job}`. Queues `dependency_fragility_analysis`. 409 without a snapshot or when another job is active. Rate limited |
+| GET | `/api/projects/{id}/fragility` | `?skip&limit(≤500)&q&ecosystem&level=LOW\|MEDIUM\|HIGH&relationship&sort=fragility\|confidence\|name` |
+| GET | `/api/projects/{id}/fragility/summary` | `{available, analysis, fragility, graph, metadata, graph_issues, meaning}` |
+| GET | `/api/projects/{id}/fragility/{dependency_id}` | `{fragility, health}` |
+| POST | `/api/projects/{id}/graph-risk/analyze` | 202 `{job}`. Queues `graph_risk_analysis`. Also 409 without a vulnerability check of the snapshot |
+| GET | `/api/projects/{id}/graph-risk` | `?skip&limit&q&ecosystem&classification` |
+| GET | `/api/projects/{id}/graph-risk/{dependency_id}` | One package's classification, risk components and exposure sources |
+| POST | `/api/projects/{id}/predictive-risk/analyze` | 202 `{job}`. Queues `predictive_dependency_analysis` (all layers). Same preconditions as graph risk |
+| GET | `/api/projects/{id}/predictive-risk` | `?skip&limit&q&ecosystem&level&relationship&indicator&vulnerable&reachable&sort=risk\|fragility\|centrality\|dependents\|name` |
+| GET | `/api/projects/{id}/predictive-risk/history` | `?kind=fragility\|graph_risk\|predictive&limit(≤100)` → `{items}` |
+| GET | `/api/projects/{id}/predictive-risk/compare` | `?base&target` (analysis ids of this project) → `{base, target, comparable, summary, items}` |
+| GET | `/api/projects/{id}/predictive-risk/graph` | `{analysis, root, nodes, edges}`; 404 until a full analysis of the latest snapshot exists |
+| GET | `/api/projects/{id}/predictive-risk/{dependency_id}` | `{prediction, indicators, fragility, health, graph_risk}` |
+
+List responses are `{job, snapshot, has_vulnerability_scan, current_inputs,
+analysis, total, skip, limit, items}`; `analysis` is `null` until an analysis
+of the latest snapshot has completed, and then there are no items. A job can
+end in the state `partial` (results stored, registry metadata incomplete).
+Fields, formulas, classifications and error codes are defined in
+[phase5.md](phase5.md).
+
+Deleting a project also deletes its dependency-intelligence analyses and
+their rows. Cached registry metadata is shared reference data and is kept.
+
 ## Planned
 
 These endpoints are part of the target API and are **not implemented**;
@@ -191,9 +223,8 @@ and `/dependency-graph` paths were replaced by the Phase 2 routes above.
 
 | Method | Path | Phase |
 |---|---|---|
-| POST | `/api/projects/{id}/sbom/repair` | 4 |
-| GET | `/api/projects/{id}/fragility` | 5 |
-| GET | `/api/projects/{id}/predictions` | 5–6 |
+| POST | `/api/projects/{id}/sbom/repair` | unscheduled |
+| GET | `/api/projects/{id}/predictions` (candidate-version comparison) | 6 |
 | GET | `/api/projects/{id}/attack-paths` | 7 |
 | GET | `/api/projects/{id}/maintainers` | 8 |
 | GET | `/api/projects/{id}/maintainer-behaviour` | 8 |

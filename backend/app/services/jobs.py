@@ -33,6 +33,11 @@ VULNERABILITY_SYNC = "vulnerability_sync"
 VULNERABILITY_ANALYSIS = "vulnerability_analysis"
 SBOM_GENERATION = "sbom_generation"
 CODE_REACHABILITY_ANALYSIS = "code_reachability_analysis"
+DEPENDENCY_FRAGILITY_ANALYSIS = "dependency_fragility_analysis"
+GRAPH_RISK_ANALYSIS = "graph_risk_analysis"
+PREDICTIVE_DEPENDENCY_ANALYSIS = "predictive_dependency_analysis"
+# A job that finished and stored its results, but could not collect everything it wanted (see job.error).
+PARTIAL = "partial"
 
 STAGES: dict[str, tuple[str, ...]] = {
     VULNERABILITY_SYNC: ("QUEUED", "PROVIDER_QUERY", "RECORD_INGESTION", "MATCHING", "COMPLETED"),
@@ -40,6 +45,10 @@ STAGES: dict[str, tuple[str, ...]] = {
     SBOM_GENERATION: ("QUEUED", "SBOM_GENERATION", "SBOM_COMPARISON", "COMPLETED"),
     CODE_REACHABILITY_ANALYSIS: ("QUEUED", "SOURCE_INVENTORY", "SOURCE_PARSING", "GRAPH_BUILDING", "SYMBOL_MAPPING", "REACHABILITY",
                                  "COMPLETED"),
+    DEPENDENCY_FRAGILITY_ANALYSIS: ("QUEUED", "GRAPH_METRICS", "PACKAGE_METADATA", "FRAGILITY", "COMPLETED"),
+    GRAPH_RISK_ANALYSIS: ("QUEUED", "GRAPH_METRICS", "RISK_PROPAGATION", "COMPLETED"),
+    PREDICTIVE_DEPENDENCY_ANALYSIS: ("QUEUED", "GRAPH_METRICS", "PACKAGE_METADATA", "FRAGILITY", "RISK_PROPAGATION", "PREDICTION",
+                                     "COMPLETED"),
 }
 JOB_TYPES = tuple(STAGES)
 
@@ -62,6 +71,7 @@ class JobContext:
     providers: dict[str, Any]
     started: float
     github: Any = None          # GitHubClient, for jobs that read repository files
+    registries: dict[str, Any] | None = None   # package registry clients, keyed by ecosystem
 
     def check_deadline(self, limit_seconds: int) -> None:
         if time.monotonic() - self.started > limit_seconds:
@@ -137,7 +147,7 @@ def _finish(db: Database, job: dict[str, Any], state: str, message: str, *, erro
             extra: dict[str, Any] | None = None) -> None:
     now = _now()
     update = {"state": state, "message": message, "error": error, "finished_at": now, "updated_at": now, **(extra or {})}
-    if state == COMPLETED:
+    if state in (COMPLETED, PARTIAL):
         update.update(stage="COMPLETED", stage_index=job["stage_count"])
     # Only a job that is still active can finish: one already failed (for example as stale) keeps that outcome.
     outcome = db[ANALYSIS_JOBS].update_one({"_id": job["_id"], "state": {"$in": list(ACTIVE_STATES)}}, {"$set": update})
@@ -160,12 +170,13 @@ def handler(job_type: str) -> Callable[[Handler], Handler]:
     return register
 
 
-def run_job(db: Database, settings: Settings, providers: dict[str, Any], job: dict[str, Any], github: Any = None) -> dict[str, Any]:
+def run_job(db: Database, settings: Settings, providers: dict[str, Any], job: dict[str, Any], github: Any = None,
+            registries: dict[str, Any] | None = None) -> dict[str, Any]:
     """Execute one claimed job. Never raises: every outcome is recorded on the job."""
     # Imported here so that the service modules can register their handlers without an import cycle.
-    from app.services import reachability, sbom, vulnerabilities  # noqa: F401
+    from app.services import intelligence, reachability, sbom, vulnerabilities  # noqa: F401
 
-    context = JobContext(db=db, settings=settings, providers=providers, started=time.monotonic(), github=github)
+    context = JobContext(db=db, settings=settings, providers=providers, started=time.monotonic(), github=github, registries=registries)
     try:
         message, fields = _HANDLERS[job["type"]](context, job)
     except JobError as exc:
@@ -178,9 +189,17 @@ def run_job(db: Database, settings: Settings, providers: dict[str, Any], job: di
         _finish(db, job, FAILED, "The job stopped because of an internal error.",
                 error={"code": "INTERNAL_ERROR", "message": "The job stopped because of an internal error."})
     else:
-        _finish(db, job, COMPLETED, message, extra=fields)
+        # A handler reports an incomplete result with a "partial" entry: {"code", "message"}. The work is stored;
+        # the state says it is not everything that was asked for.
+        partial = fields.pop("partial", None)
+        if partial:
+            detail = partial if isinstance(partial, dict) else {}
+            _finish(db, job, PARTIAL, message, extra=fields, error={
+                "code": str(detail.get("code") or "PARTIAL"), "message": str(detail.get("message") or "The job finished with part of its input missing.")})
+        else:
+            _finish(db, job, COMPLETED, message, extra=fields)
     audit.record(db, f"job.{job['type']}.finish", actor_id=job.get("owner_id"),
-                 outcome="success" if job["state"] == COMPLETED else "failure",
+                 outcome="success" if job["state"] == COMPLETED else "partial" if job["state"] == PARTIAL else "failure",
                  resource_type="project", resource_id=job["project_id"],
                  details={"job_id": str(job["_id"]), "error_code": (job.get("error") or {}).get("code"),
                           "seconds": round(time.monotonic() - context.started, 2)})

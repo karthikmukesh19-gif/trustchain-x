@@ -231,7 +231,9 @@ def test_all_declared_collections_have_indexes(client, db):
 
     # 29 from the original data model + vulnerability_syncs and vulnerability_sources (Phase 3)
     # + source_files, source_symbols, code_edges and reachability_analyses (Phase 4)
-    assert len(ALL_COLLECTIONS) == 35
+    # + dependency_analyses, dependency_fragility, dependency_health, graph_risk_analysis, predictive_indicators
+    #   and package_metadata (Phase 5)
+    assert len(ALL_COLLECTIONS) == 41
     for name in ALL_COLLECTIONS:
         assert len(db[name].index_information()) == len(INDEXES[name]) + 1  # + the _id index
 

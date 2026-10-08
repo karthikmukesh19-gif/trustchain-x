@@ -177,4 +177,4 @@ job record.
   `GITHUB_TOKEN` for regular use.
 - Language detection is by file extension and size.
 - `dependency_versions` catalogues each resolved version seen (PURL, first and
-  last seen); registry facts (publish dates, maintainers) are added in Phase 5.
+  last seen); release dates come from the registries in Phase 5 (`package_metadata`); maintainer facts are not collected yet.

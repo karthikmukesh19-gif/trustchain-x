@@ -45,6 +45,12 @@ SOURCE_FILES = "source_files"
 SOURCE_SYMBOLS = "source_symbols"
 CODE_EDGES = "code_edges"
 REACHABILITY_ANALYSES = "reachability_analyses"
+DEPENDENCY_ANALYSES = "dependency_analyses"
+DEPENDENCY_FRAGILITY = "dependency_fragility"
+DEPENDENCY_HEALTH = "dependency_health"
+GRAPH_RISK_ANALYSIS = "graph_risk_analysis"
+PREDICTIVE_INDICATORS = "predictive_indicators"
+PACKAGE_METADATA = "package_metadata"
 ATTACK_PATHS = "attack_paths"
 MAINTAINERS = "maintainers"
 MAINTAINER_PROFILES = "maintainer_profiles"
@@ -117,7 +123,24 @@ INDEXES: dict[str, list[Index]] = {
     COMMITS: [idx(("repository_id", A), ("sha", A), unique=True), idx(("repository_id", A), ("committed_at", D))],
     COMMIT_ANALYSIS: [idx(("commit_id", A), unique=True), idx(("project_id", A), ("risk_level", A))],
     SECURITY_EVENTS: [idx(("project_id", A), ("created_at", D))],
-    PREDICTIONS: [idx(("project_id", A), ("snapshot_id", A), ("subject_type", A), ("subject_id", A))],
+    PREDICTIONS: [
+        idx(("project_id", A), ("snapshot_id", A), ("subject_type", A), ("subject_id", A)),
+        idx(("analysis_id", A), ("node_id", A)),
+        idx(("analysis_id", A), ("score", D)),
+    ],
+    DEPENDENCY_ANALYSES: [
+        idx(("project_id", A), ("kind", A), ("created_at", D)),
+        idx(("project_id", A), ("snapshot_id", A), ("layers", A), ("created_at", D)),
+        idx(("project_id", A), ("kind", A), ("input_digest", A)),
+    ],
+    DEPENDENCY_FRAGILITY: [idx(("analysis_id", A), ("node_id", A), unique=True), idx(("analysis_id", A), ("fragility_score", D)),
+                           idx(("project_id", A), ("snapshot_id", A))],
+    DEPENDENCY_HEALTH: [idx(("analysis_id", A), ("node_id", A), unique=True), idx(("project_id", A), ("snapshot_id", A))],
+    GRAPH_RISK_ANALYSIS: [idx(("analysis_id", A), ("node_id", A), unique=True), idx(("analysis_id", A), ("graph_risk", D)),
+                          idx(("project_id", A), ("snapshot_id", A))],
+    PREDICTIVE_INDICATORS: [idx(("analysis_id", A), ("node_id", A), ("type", A), unique=True), idx(("analysis_id", A), ("type", A)),
+                            idx(("project_id", A), ("snapshot_id", A))],
+    PACKAGE_METADATA: [idx(("ecosystem", A), ("normalized_name", A), unique=True), idx(("fetched_at", D))],
     TRUST_SCORES: [idx(("project_id", A), ("created_at", D))],
     AI_FINDINGS: [idx(("project_id", A), ("snapshot_id", A), ("severity", A))],
     REMEDIATION_ACTIONS: [idx(("project_id", A), ("created_at", D))],

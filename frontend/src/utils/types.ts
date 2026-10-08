@@ -108,7 +108,8 @@ export interface Liveness {
 /** How a statement is known: read from a file, derived by a documented rule, or not established. */
 export type Basis = "OBSERVED" | "INFERRED" | "UNKNOWN";
 export type Relationship = "DIRECT" | "TRANSITIVE" | "UNKNOWN";
-export type JobState = "queued" | "running" | "completed" | "failed";
+/** "partial": the job finished and stored its results, but part of its input could not be collected (see the job's error). */
+export type JobState = "queued" | "running" | "completed" | "partial" | "failed";
 
 export interface AnalysisSummary {
   dependencies: number;
@@ -309,7 +310,9 @@ export interface DependencyGraphData {
 
 // --- Phase 3: vulnerability intelligence and SBOM ------------------------------
 
-export type JobType = "dependencies" | "vulnerability_sync" | "vulnerability_analysis" | "sbom_generation" | "code_reachability_analysis";
+export type JobType =
+  | "dependencies" | "vulnerability_sync" | "vulnerability_analysis" | "sbom_generation" | "code_reachability_analysis"
+  | "dependency_fragility_analysis" | "graph_risk_analysis" | "predictive_dependency_analysis";
 
 /** A background job of any type, as returned by /jobs. */
 export interface ProjectJob {
@@ -758,4 +761,279 @@ export interface ReachabilityList {
   skip: number;
   limit: number;
   items: ReachabilityFinding[];
+}
+
+// --- dependency intelligence (fragility, graph risk, predictive indicators) --------------
+
+export type RiskLevel = "LOW" | "MEDIUM" | "HIGH";
+export type ExposureClassification = "DIRECT_VULNERABILITY" | "DEPENDENCY_PROPAGATION" | "INDIRECT_EXPOSURE" | "NO_OBSERVED_PROPAGATION";
+export type EvidenceKind = "OBSERVED" | "DERIVED" | "PREDICTED" | "RECOMMENDED";
+export type ReachabilityState = ReachabilityStatus | "NOT_ANALYSED";
+export type IntelligenceKind = "fragility" | "graph_risk" | "predictive";
+
+export interface ScoreFactor {
+  name: string;
+  weight: number;
+  /** 0-1, or null when the data for this factor is not available. An unknown factor contributes nothing and is never estimated. */
+  value: number | null;
+  contribution: number;
+  /** ASSUMED: the fact is not established (severity not published, reachability undecided) and the model uses its stated neutral value. */
+  status: "KNOWN" | "UNKNOWN" | "ASSUMED";
+  basis: "OBSERVED" | "DERIVED";
+  detail: string;
+  inputs?: Record<string, unknown>;
+}
+
+export interface VersionAssessment {
+  comparison_status: "COMPARED" | "UNSUPPORTED" | "UNKNOWN";
+  position: "UP_TO_DATE" | "BEHIND" | "AHEAD_OF_LATEST" | null;
+  reason: string | null;
+  comparator: string | null;
+  latest_version: string | null;
+  major_distance: number | null;
+  minor_distance: number | null;
+  patch_distance: number | null;
+  releases_behind: number | null;
+  lag_days: number | null;
+  installed_age_days: number | null;
+  latest_age_days: number | null;
+  releases_last_365_days: number | null;
+  installed_withdrawn: boolean | null;
+  installed_deprecated: boolean | null;
+}
+
+export interface FragilityRow {
+  dependency_id: string;
+  node_id: string;
+  package_name: string;
+  normalized_name: string;
+  ecosystem: string;
+  version: string | null;
+  relationship: Relationship;
+  fragility_score: number;
+  fragility_level: RiskLevel;
+  confidence: number;
+  model_version: string;
+  factors: ScoreFactor[];
+  observed_metrics: {
+    direct: boolean; depth: number | null; fan_in: number; fan_out: number; dependents: number; dependents_share: number;
+    introduced: number; exclusive: number; reached_by_direct: number; reached_by_direct_share: number | null; in_cycle: boolean;
+    connected_to_project: boolean;
+  };
+  inferred_metrics: {
+    degree_centrality: number; betweenness_centrality: number | null; relative_centrality: number; centrality_measure: string;
+    single_point: boolean; version: VersionAssessment;
+    concentration: { importing_modules: number | null; importing_module_share: number | null; use_sites: number | null };
+  };
+  unknown_factors: string[];
+}
+
+export interface DependencyHealth {
+  installed_version: string | null;
+  latest_release: string | null;
+  latest_release_at: string | null;
+  installed_release_at: string | null;
+  release_age_days: number | null;
+  latest_release_age_days: number | null;
+  release_frequency: number | null;
+  known_vulnerability_count: number | null;
+  reachable_vulnerability_count: number | null;
+  dependency_count: number | null;
+  downstream_dependents: number | null;
+  repository_activity: null;
+  metadata_confidence: "HIGH" | "MEDIUM" | "LOW" | "NONE";
+  metadata_source: { registry: string | null; status: string | null; detail: string | null; fetched_at: string | null; url: string | null; stale: boolean };
+  version: VersionAssessment;
+  unknown: { field: string; status: "UNKNOWN"; reason: string }[];
+}
+
+export interface GraphRiskRow {
+  dependency_id: string | null;
+  node_id: string;
+  package_name: string | null;
+  normalized_name: string | null;
+  ecosystem: string | null;
+  version: string | null;
+  relationship: Relationship | null;
+  classification: ExposureClassification;
+  components: { vulnerability_signal: number; reachability_signal: number | null; centrality_signal: number; downstream_impact: number; confidence: number | null };
+  own_risk: number;
+  propagated_risk: number;
+  graph_risk: number;
+  severity: Severity | null;
+  reachability_state: ReachabilityState | null;
+  vulnerability_count: number;
+  exposure_sources: { node_id: string; distance: number; source_risk: number; influence: number }[];
+  exposure_source_count: number;
+  exposes: number;
+  model_version: string;
+}
+
+export interface PredictiveIndicator {
+  type: string;
+  severity: RiskLevel;
+  confidence: number;
+  evidence: string[];
+  basis: "OBSERVED" | "DERIVED";
+  indicator_version: string;
+}
+
+export interface PredictionRow {
+  dependency_id: string;
+  node_id: string;
+  package_name: string;
+  normalized_name: string;
+  ecosystem: string;
+  version: string | null;
+  relationship: Relationship;
+  score: number;
+  level: RiskLevel;
+  confidence: number;
+  model_version: string;
+  meaning: string;
+  fragility_score: number;
+  fragility_confidence: number;
+  graph_risk: number;
+  exposure_classification: ExposureClassification;
+  vulnerability_count: number;
+  max_severity: Severity | null;
+  /** null when no reachability analysis covers this dependency. */
+  reachable_vulnerability_count: number | null;
+  reachability_state: ReachabilityState | null;
+  dependents: number;
+  depth: number | null;
+  relative_centrality: number;
+  indicator_types: string[];
+  indicator_count: number;
+  monitoring_rank: number;
+}
+
+export interface PredictionDetailRow extends PredictionRow {
+  factors: ScoreFactor[];
+  evidence: Record<EvidenceKind, string[]>;
+}
+
+export interface PredictionDetail {
+  prediction: PredictionDetailRow;
+  indicators: PredictiveIndicator[];
+  fragility: FragilityRow | null;
+  health: DependencyHealth | null;
+  graph_risk: GraphRiskRow | null;
+}
+
+export interface FragilityDetail {
+  fragility: FragilityRow;
+  health: DependencyHealth | null;
+}
+
+export interface MetadataStats {
+  packages: number; from_cache: number; fetched: number; not_found: number; errors: number; unsupported_ecosystem: number;
+  invalid_name: number; skipped_by_limit: number; skipped_after_failures: number; incomplete: boolean; providers: string[];
+}
+
+export interface GraphConcentration {
+  packages: number; relationships: number; direct_dependencies: number; unconnected_packages: number; max_depth: number;
+  packages_in_cycles: number; effective_packages: number | null;
+  top_dependents: { node_id: string; dependents: number; share: number }[];
+  largest_subtrees: { node_id: string; introduced: number; share: number }[];
+}
+
+export interface IntelligenceSummary {
+  kind: IntelligenceKind;
+  packages: number;
+  graph: GraphConcentration;
+  betweenness_computed: boolean;
+  vulnerability_scan: boolean;
+  reachability_analysed: boolean;
+  metadata?: MetadataStats | null;
+  fragility?: {
+    dependencies: number; by_level: Partial<Record<RiskLevel, number>>; highest: number | null; mean: number | null;
+    mean_confidence: number | null; single_points: number; version_comparison: Record<string, number>;
+  };
+  graph_risk?: {
+    by_classification: Record<ExposureClassification, number>;
+    project: { classification: ExposureClassification; vulnerable_packages: number; reachable_from_project: number; highest_graph_risk: number };
+    paths: { node_id: string; path: string[] | null; length: number | null; own_risk: number; path_truncated: boolean }[];
+    paths_truncated: boolean;
+    parameters: { decay: number };
+  };
+  predictive?: {
+    dependencies: number; by_level: Partial<Record<RiskLevel, number>>; indicators: Record<string, number>; indicator_total: number;
+    highest: number | null;
+  };
+}
+
+export interface IntelligenceAnalysis {
+  id: string;
+  kind: IntelligenceKind;
+  layers: string[];
+  commit_sha: string;
+  created_at: string;
+  completed_at: string | null;
+  model_versions: { fragility: string; graph_risk: string; predictive: string; indicators: string };
+  inputs: { vulnerability_scan_matched_at: string | null; reachability: { completed_at: string | null } | null; metadata_providers: string[] };
+  summary: IntelligenceSummary;
+}
+
+export interface IntelligenceList<Row> {
+  job: ProjectJob | null;
+  snapshot: { id: string; commit_sha: string; branch: string | null } | null;
+  has_vulnerability_scan: boolean;
+  /** When the snapshot's inputs last changed; compared with `analysis.inputs` to tell when the analysis is out of date. */
+  current_inputs: { vulnerability_scan_matched_at: string | null; reachability_completed_at: string | null } | null;
+  /** null until an analysis of the latest snapshot has completed. Nothing is reported without one. */
+  analysis: IntelligenceAnalysis | null;
+  total: number;
+  skip: number;
+  limit: number;
+  items: Row[];
+  indicator_types?: string[];
+}
+
+export interface RiskGraphNode {
+  dependency_id: string;
+  node_id: string;
+  package_name: string;
+  normalized_name: string;
+  ecosystem: string;
+  version: string | null;
+  relationship: Relationship;
+  depth: number | null;
+  score: number;
+  level: RiskLevel;
+  confidence: number;
+  fragility_score: number;
+  graph_risk: number;
+  exposure_classification: ExposureClassification;
+  vulnerability_count: number;
+  reachable_vulnerability_count: number | null;
+  relative_centrality: number;
+  dependents: number;
+  indicator_types: string[];
+}
+
+export interface RiskGraphData {
+  analysis: { id: string; created_at: string };
+  root: { id: string; label?: string };
+  nodes: RiskGraphNode[];
+  edges: { source: string; target: string }[];
+}
+
+export interface AnalysisComparison {
+  base: { analysis_id: string; created_at: string; commit_sha: string };
+  target: { analysis_id: string; created_at: string; commit_sha: string };
+  comparable: boolean;
+  summary: { added: number; removed: number; changed: number; unchanged: number };
+  items: {
+    ecosystem: string;
+    normalized_name: string;
+    change: "ADDED" | "REMOVED" | "CHANGED";
+    before?: { version?: string | null; predictive_risk?: number; fragility_score?: number };
+    after?: { version?: string | null; predictive_risk?: number; fragility_score?: number };
+    deltas?: Partial<Record<"fragility_score" | "predictive_risk" | "graph_risk", number>>;
+    indicators_added?: string[];
+    indicators_removed?: string[];
+    version_changed?: boolean;
+  }[];
+  items_truncated: boolean;
 }

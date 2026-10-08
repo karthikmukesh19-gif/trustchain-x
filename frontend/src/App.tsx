@@ -4,6 +4,7 @@ import { ProtectedRoute, PublicOnlyRoute } from "./components/ProtectedRoute";
 import { AppLayout } from "./layouts/AppLayout";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DependenciesPage } from "./pages/DependenciesPage";
+import { FragilityPage } from "./pages/FragilityPage";
 import { GraphPage } from "./pages/GraphPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/projects/:id/graph" element={<GraphPage />} />
           <Route path="/projects/:id/vulnerabilities" element={<VulnerabilitiesPage />} />
           <Route path="/projects/:id/reachability" element={<ReachabilityPage />} />
+          <Route path="/projects/:id/fragility" element={<FragilityPage />} />
           <Route path="/projects/:id/sbom" element={<SbomPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
