@@ -82,17 +82,35 @@ timeout, unreachable, unexpected response).
 |---|---|---|
 | GET | `/api/dashboard/summary` | `{generated_at, projects_total, projects_analysed, projects_by_status, repository_metadata, registrations_by_day[14], recent_projects[≤5], recent_activity[≤10]}` — the caller's own data only. It contains no trust, risk or vulnerability figures, because none exist until analysis is implemented |
 
+## Implemented (Phase 2) — dependency analysis
+
+All routes require the project's owner; any other caller gets 404.
+
+| Method | Path | Result |
+|---|---|---|
+| POST | `/api/projects/{id}/analysis/dependencies` | 202 `{job}`. Queues a background analysis. 409 if one is already queued or running for the project |
+| GET | `/api/projects/{id}/analysis/status` | 200 `{job, has_results, last_analysis}`. `job` is the most recent job or `null`. `job.state` is `queued`, `running`, `completed` or `failed`; `job.stage` is `QUEUED`, `REPOSITORY_SNAPSHOT`, `REPOSITORY_DISCOVERY`, `DEPENDENCY_DISCOVERY`, `GRAPH_BUILDING` or `COMPLETED`, with `stage_index` / `stage_count`, `message`, `error: {code, message}` on failure, `summary` and `snapshot_id` on completion, and `reused_snapshot` when the commit was unchanged |
+| GET | `/api/projects/{id}/snapshot` | 200 latest complete snapshot: repository, branch, `commit_sha`, `tree_sha`, `committed_at`, `collected_at`, `analyzer_version`, `collection_method`, `file_count`, `total_bytes`, `languages`, `github_primary_language`, `package_managers`, `dependency_files`, `notes`, `summary`. 404 if the project has not been analysed |
+| GET | `/api/projects/{id}/snapshot/files` | `?skip&limit(≤500)&q` — discovered files with size and git blob id |
+| GET | `/api/projects/{id}/dependencies` | `?skip&limit(≤500)&ecosystem&relationship=DIRECT\|TRANSITIVE\|UNKNOWN&version_status=RESOLVED\|UNRESOLVED&q` → `{snapshot, summary, total, skip, limit, items}`. Each item carries its evidence |
+| GET | `/api/projects/{id}/dependencies/graph` | `{snapshot, root, nodes, edges, stats}`; with `?paths_to=<node id>` also `paths` |
+| GET | `/api/projects/{id}/dependencies/paths` | `?to=<node id>` → up to 20 paths from the project to that package, shortest first |
+
+See [dependency-analysis.md](dependency-analysis.md) for field meanings,
+classification rules, limits and error codes.
+
+The project object gains `latest_snapshot_id`; `languages` and
+`last_analysis` are filled in by a completed analysis. Deleting a project
+deletes its jobs, snapshots, dependencies and graphs.
+
 ## Planned
 
 These endpoints are part of the target API and are **not implemented**;
-calling them returns 404 today.
+calling them returns 404 today. The originally planned `/analyze`, `/status`
+and `/dependency-graph` paths were replaced by the Phase 2 routes above.
 
 | Method | Path | Phase |
 |---|---|---|
-| POST | `/api/projects/{id}/analyze` | 2 |
-| GET | `/api/projects/{id}/status` | 2 |
-| GET | `/api/projects/{id}/dependencies` | 2 |
-| GET | `/api/projects/{id}/dependency-graph` | 2 |
 | GET | `/api/projects/{id}/vulnerabilities` | 3 |
 | GET | `/api/projects/{id}/reachability` | 3 |
 | GET | `/api/projects/{id}/sbom` | 4 |
@@ -111,7 +129,7 @@ calling them returns 404 today.
 | GET | `/api/datasets/{id}/quality` | 11 |
 | GET | `/api/projects/{id}/trust-score` | 12 |
 | GET | `/api/projects/{id}/report` | 13 |
-| WS | `/ws/projects/{project_id}` | 2 (job progress), 9 (security events) |
+| WS | `/ws/projects/{project_id}` | 9 (job progress is polled through `analysis/status` until then) |
 
 Two endpoints exist that were not in the original list:
 `POST /api/projects/{id}/refresh-metadata` and `DELETE /api/projects/{id}`

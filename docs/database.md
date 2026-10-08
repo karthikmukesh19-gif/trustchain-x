@@ -18,7 +18,7 @@ Conventions:
   tied to the exact repository state it was computed from.
 - Evidence records keep `source` and `fetched_at`/`observed_at`.
 
-## Collections in use (Phase 1)
+## Collections in use
 
 ### `users`
 
@@ -59,9 +59,11 @@ Indexes: `{key: 1}` unique.
 | `repository_key` | string | copy of `repositories.key` for the uniqueness index |
 | `repository_url` | string | canonical `https://github.com/<owner>/<name>` |
 | `default_branch` | string \| null | copied from repository metadata when known |
-| `languages` | string[] | empty until language detection (Phase 2) |
+| `languages` | string[] | detected languages from the latest analysis |
 | `status` | string | `ACTIVE` |
-| `last_analysis` | datetime \| null | `null` until an analysis completes (Phase 2+) |
+| `last_analysis` | datetime \| null | time of the last completed dependency analysis |
+| `latest_snapshot_id` | ObjectId \| null | → `repository_snapshots`; the snapshot the API serves |
+| `active_job_id` | ObjectId \| null | set while a job is queued or running; claimed atomically so only one can be |
 | `created_at`, `updated_at` | datetime | |
 
 Indexes: `{owner_id: 1, repository_key: 1}` unique (a user registers a
@@ -74,7 +76,7 @@ Append-only record of security-relevant actions.
 | Field | Type | Notes |
 |---|---|---|
 | `timestamp` | datetime | |
-| `action` | string | `auth.register`, `auth.login`, `project.create`, `project.refresh_metadata`, `project.delete` |
+| `action` | string | `auth.register`, `auth.login`, `project.create`, `project.refresh_metadata`, `project.delete`, `analysis.dependencies.request`, `analysis.dependencies.finish` |
 | `outcome` | string | `success` \| `failure` |
 | `actor_id` | ObjectId \| null | `null` for failed sign-ins |
 | `resource_type`, `resource_id` | string, ObjectId \| null | |
@@ -83,14 +85,99 @@ Append-only record of security-relevant actions.
 
 Indexes: `{actor_id: 1, timestamp: -1}`; `{action: 1, timestamp: -1}`.
 
+### `analysis_jobs`
+
+| Field | Type | Notes |
+|---|---|---|
+| `project_id`, `owner_id`, `repository_id` | ObjectId | |
+| `type` | string | `dependencies` |
+| `state` | string | `queued` → `running` → `completed` \| `failed` |
+| `stage`, `stage_index`, `stage_count`, `message` | | progress shown to the user |
+| `error` | object \| null | `{code, message}` (and `retry_at` for rate limits) |
+| `snapshot_id`, `summary`, `reused_snapshot` | | set on completion |
+| `analyzer_version` | string | |
+| `created_at`, `started_at`, `finished_at`, `updated_at` | datetime | |
+
+Indexes: `{project_id: 1, created_at: -1}`; `{state: 1, created_at: 1}`.
+
+### `repository_snapshots`
+
+Immutable record of the repository at one commit, per project.
+
+| Field | Type | Notes |
+|---|---|---|
+| `project_id`, `repository_id`, `job_id` | ObjectId | |
+| `repository_url`, `repository_full_name`, `branch` | string | |
+| `commit_sha`, `tree_sha`, `committed_at`, `commit_message` | | from the GitHub commit |
+| `collected_at` | datetime | |
+| `status` | string | `COLLECTED` while results are being written, then `COMPLETE`. Only `COMPLETE` snapshots are served; an incomplete one is replaced on the next run |
+| `analyzer_version`, `collection_method` | string | |
+| `file_count`, `total_bytes`, `rejected_paths`, `symlinks_skipped`, `submodules_skipped` | int | |
+| `files` | array | `{path, size, sha}` for every discovered file (`sha` = git blob id) |
+| `languages` | object | `{primary_language, languages: [{language, files, bytes, share, confidence, basis, evidence_files}]}` |
+| `github_primary_language` | string \| null | what GitHub reports, kept for comparison |
+| `package_managers` | array | `{package_manager, ecosystem, basis, supported, manifest_files, lock_files}` |
+| `dependency_files` | array | per file: path, kind, package manager, status, error, `git_blob_sha`, `sha256`, counts, notes |
+| `notes`, `summary` | | resolver notes; totals shown in the UI |
+| `github_requests`, `github_rate_remaining` | int | API cost of the collection |
+
+Indexes: `{project_id: 1, commit_sha: 1, analyzer_version: 1}` unique;
+`{project_id: 1, collected_at: -1}`.
+
+### `dependencies`
+
+One document per package version (or per unresolved package) in a snapshot.
+
+| Field | Type | Notes |
+|---|---|---|
+| `project_id`, `snapshot_id` | ObjectId | |
+| `node_id` | string | `ecosystem:normalized_name@version`; id used by the graph |
+| `ecosystem`, `name`, `normalized_name`, `package_managers` | | |
+| `version`, `version_status`, `version_basis`, `version_reason` | | `RESOLVED` / `UNRESOLVED`; basis OBSERVED or UNKNOWN |
+| `constraints` | string[] | as declared |
+| `purl` | string | package URL; without a version when unresolved |
+| `relationship`, `relationship_basis`, `relationship_reason` | | `DIRECT` / `TRANSITIVE` / `UNKNOWN`; OBSERVED / INFERRED / UNKNOWN; the rule applied |
+| `scopes`, `optional` | | runtime, dev, test, build, optional, peer, unknown |
+| `integrity` | array | `{algorithm, value}` from lockfiles |
+| `source` | object \| null | registry, git, path or URL source when recorded |
+| `depth`, `shortest_path_count`, `parents` | | from the graph |
+| `evidence`, `evidence_count` | array, int | up to 20 occurrences: `{source_file, line, raw, kind, package_manager, scope, evidence_type, git_blob_sha, …}` |
+
+Indexes: `{snapshot_id: 1, node_id: 1}` unique;
+`{project_id: 1, snapshot_id: 1, ecosystem: 1, normalized_name: 1}`.
+
+### `dependency_graphs`
+
+| Field | Type | Notes |
+|---|---|---|
+| `project_id`, `snapshot_id`, `created_at` | | one graph per snapshot |
+| `root` | object | `{id: "root", type: "application", label}` |
+| `nodes` | array | dependency records without evidence and integrity |
+| `edges` | array | `{source, target, relationship: "depends_on", basis, evidence_file, spec, …}` |
+| `stats` | object | totals, direct, transitive, unknown, unresolved, edges, `max_depth`, `by_ecosystem`, `by_relationship_basis`, `by_depth` |
+
+Indexes: `{snapshot_id: 1}` unique; `{project_id: 1, created_at: -1}`.
+
+### `dependency_versions`
+
+Shared across projects: one document per `(ecosystem, package_name, version)`
+that any analysis has resolved, with its `purl`, `source` and
+`first_seen_at` / `last_seen_at`. Registry facts are added in Phase 5.
+
+Indexes: `{ecosystem: 1, package_name: 1, version: 1}` unique.
+
+### Index changes in Phase 2
+
+`ensure_indexes()` now also drops indexes that are no longer declared, so
+databases created by Phase 1 are migrated at start-up:
+
+| Collection | Phase 1 | Phase 2 | Why |
+|---|---|---|---|
+
 ## Collections declared for later phases
 
 | Collection | Purpose | Key fields (planned) | Indexes | Written from |
 |---|---|---|---|---|
-| `repository_snapshots` | Immutable state of a repo at one commit | `repository_id`, `project_id`, `commit_sha`, `branch`, detected languages / package managers / dependency files / lockfiles / SBOM / CI / Docker / IaC, `created_at` | `{repository_id, commit_sha}` unique; `{project_id, created_at:-1}` | Phase 2 |
-| `dependencies` | Normalised dependency of a snapshot | `project_id`, `snapshot_id`, `purl`, `package_name`, `ecosystem`, `version`, `direct`, `transitive`, `source`, `repository`, `license` | `{snapshot_id, purl}` unique; `{project_id, ecosystem, package_name}` | Phase 2 |
-| `dependency_versions` | Registry facts about a package version (shared) | `ecosystem`, `package_name`, `version`, `published_at`, `source`, `fetched_at` | `{ecosystem, package_name, version}` unique | Phase 2 |
-| `dependency_graphs` | Graph of a snapshot | `project_id`, `snapshot_id`, `nodes`, `edges`, metrics | `{snapshot_id}` unique; `{project_id, created_at:-1}` | Phase 2 |
 | `sboms` | Original and verified SBOM documents (kept separately; originals are never overwritten) | `project_id`, `snapshot_id`, `kind` (`ORIGINAL` \| `VERIFIED`), `format` (`CycloneDX` \| `SPDX`), `content_hash`, `integrity_score` | `{project_id, snapshot_id, kind}`; `{content_hash}` | Phase 4 |
 | `sbom_components` | Components of an SBOM | `sbom_id`, `purl`, `name`, `version` | `{sbom_id, purl}` | Phase 4 |
 | `sbom_differences` | Missing / extra / mismatched components and repair actions | `project_id`, `snapshot_id`, `difference_type`, `purl`, `repair_action` | `{project_id, snapshot_id, difference_type}` | Phase 4 |
@@ -111,7 +198,6 @@ Indexes: `{actor_id: 1, timestamp: -1}`; `{action: 1, timestamp: -1}`.
 | `datasets` | Dataset registry | `name`, `source`, `version`, `hash`, `license`, `language`, `label_schema`, `provenance`, `quality_score`, `duplicate_rate`, `class_distribution`, `validation_status` | `{name, version}` unique; `{owner_id}` | Phase 11 |
 | `dataset_records` | Records of a dataset | `dataset_id`, `record_hash`, payload, label | `{dataset_id, record_hash}` | Phase 11 |
 | `dataset_quality` | Validation results and trust score | `dataset_id`, checks, indicators, `created_at` | `{dataset_id, created_at:-1}` | Phase 11 |
-| `analysis_jobs` | Pipeline job state and progress | `project_id`, `state`, `progress`, `error`, timestamps | `{project_id, created_at:-1}`; `{state, created_at}` | Phase 2 |
 
 ## Notes
 
@@ -120,5 +206,6 @@ Indexes: `{actor_id: 1, timestamp: -1}`; `{action: 1, timestamp: -1}`.
   `GITHUB_TOKEN` with access to private repositories were configured, their
   metadata would become visible to any user who registers them — use a token
   limited to public data.
-- Deleting a project removes the project document only. The shared
-  `repositories` document and the audit trail are kept.
+- Deleting a project removes the project and its analysis data (jobs,
+  snapshots, dependencies, graphs). The shared `repositories` and
+  `dependency_versions` documents and the audit trail are kept.

@@ -39,16 +39,16 @@ The stack is not negotiable. Secrets come from environment variables only.
                          │ REST / WebSocket
                          ▼
                 ┌─────────────────┐
-                │ FastAPI Backend │   BUILT (auth, projects, health, dashboard)
+                │ FastAPI Backend │   BUILT (auth, projects, analysis, health)
                 └────────┬────────┘
                          │
         ┌────────────────┼────────────────┐
         ▼                ▼                ▼
- Repository        Dependency         SBOM Engine         PLANNED
- Collector         Analyzer           & Verifier          (Phases 2, 4)
+ Repository        Dependency         SBOM Engine         BUILT, BUILT,
+ Collector         Analyzer           & Verifier          PLANNED (Phase 4)
         └────────────────┼────────────────┘
                          ▼
-                Dependency Graph                          PLANNED (Phases 2, 6)
+                Dependency Graph                          BUILT (prediction: Phase 6)
                          │
         ┌────────────────┼──────────────────┐
         ▼                ▼                  ▼
@@ -78,8 +78,8 @@ The stack is not negotiable. Secrets come from environment variables only.
 | `frontend` | Nginx serving the built React app; proxies `/api` and `/ws` to the backend | BUILT |
 | `backend` | FastAPI application (Uvicorn) | BUILT |
 | `mongodb` | System of record | BUILT |
-| `redis` | Worker heartbeat now; analysis job queue from Phase 2 | BUILT |
-| `worker` | Background process. Publishes a heartbeat today; runs the analysis pipeline from Phase 2 | BUILT (heartbeat only) |
+| `redis` | Worker heartbeat and analysis job wake-ups | BUILT |
+| `worker` | Background process: runs dependency-analysis jobs and publishes a heartbeat | BUILT |
 
 ---
 
@@ -95,10 +95,11 @@ backend/app/
 ├── schemas/         Pydantic request/response models
 ├── models/          MongoDB connection, collection names, index definitions
 ├── services/        business logic (users, projects, audit log, dashboard)
-├── collectors/      clients for external sources (GitHub metadata today)
+├── collectors/      clients for external sources (GitHub metadata, commits, trees, blobs)
 ├── workers/         background worker process
-├── analyzers/       PLANNED — dependency, vulnerability, reachability, fragility
-├── graph/           PLANNED — dependency graph, propagation, attack paths
+├── analyzers/       language / package-manager detection, dependency parsers,
+│                    normalisation, resolution (vulnerability, reachability, fragility: PLANNED)
+├── graph/           dependency graph construction and path queries (propagation, attack paths: PLANNED)
 ├── sbom/            PLANNED — SBOM parse / verify / reconstruct
 ├── ml/              PLANNED — models, features, evaluation
 └── websocket/       PLANNED — live progress and security events
@@ -154,12 +155,24 @@ system** (`analysis_jobs` + worker + Redis queue) and the **audit log**.
 
 ---
 
-## 5. Analysis pipeline (PLANNED, Phase 2 onward)
+## 5. Analysis pipeline
 
-Analysis never runs inside an HTTP request. `POST /api/projects/{id}/analyze`
-creates a job document and enqueues its id; the worker advances the job
-through these states, persisting progress to MongoDB and publishing each
-transition to `/ws/projects/{project_id}`:
+Analysis never runs inside an HTTP request. A job document is created and the
+worker is woken through Redis; the worker advances the job and persists its
+progress to MongoDB, which the frontend polls.
+
+**Built (Phase 2)** — `POST /api/projects/{id}/analysis/dependencies`:
+
+```text
+queued → running [REPOSITORY_SNAPSHOT → REPOSITORY_DISCOVERY → DEPENDENCY_DISCOVERY
+→ GRAPH_BUILDING] → completed | failed
+```
+
+Details are in [dependency-analysis.md](dependency-analysis.md).
+
+**Target (later phases)** — the full pipeline extends the same job system
+with these stages, and pushes transitions over `/ws/projects/{project_id}`
+from Phase 9:
 
 ```text
 QUEUED → CLONING → REPOSITORY_DISCOVERY → DEPENDENCY_DISCOVERY → SBOM_ANALYSIS
@@ -191,9 +204,12 @@ repository code on the host.
 | Security response headers | `security/headers.py` | BUILT |
 | Audit log of security-relevant actions | `services/audit.py` | BUILT |
 | Containers run as non-root, no privileged mode, dropped capabilities, read-only root filesystem for the API | `Dockerfile`, `docker-compose.yml` | BUILT |
-| Sandboxed clone and analysis (no network after clone, CPU/memory/time limits, size limits) | `collectors/`, `workers/` | PLANNED (Phase 2) |
-| Command-injection and path-traversal protection for repository handling | `collectors/` | PLANNED (Phase 2) |
+| Repository acquisition without cloning or executing anything: GitHub API only, git-blob integrity check, size / count / time limits, rate-limit handling | `collectors/github.py`, `services/analysis.py` | BUILT |
+| Path validation for repository-provided paths; no shell commands built from repository content; safe XML / YAML parsing | `collectors/github.py`, `analyzers/` | BUILT |
+| Sandboxed execution of repository code | — | Not needed so far: no phase executes repository code. Required before any that does |
 | WebSocket authentication | `websocket/` | PLANNED (Phase 9) |
+
+Full control list: [security.md](security.md).
 
 ### Known limitations today
 

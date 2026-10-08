@@ -30,3 +30,7 @@ datasets/*
 .idea/
 .DS_Store
 Thumbs.db
+
+# frontend tests
+frontend/test-results/
+frontend/playwright-report/
