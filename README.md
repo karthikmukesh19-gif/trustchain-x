@@ -16,8 +16,9 @@ The project is built in phases (see [docs/roadmap.md](docs/roadmap.md)).
 | **Phase 0 — architecture** | Done |
 | **Phase 1 — foundation** | Done, validated in Docker |
 | **Phase 2 — repository and dependency intelligence** | Done, validated in Docker |
-| **Phase 3 — vulnerability intelligence and SBOM foundation** | Code complete; see *Verification status* below |
-| Phases 4–14 — SBOM repair, fragility, prediction, attack paths, behaviour, AI, scoring, reporting | Not started |
+| **Phase 3 — vulnerability intelligence and SBOM foundation** | Done |
+| **Phase 4 — code reachability analysis** | Code complete; see *Verification status* below |
+| Later phases — SBOM repair, fragility, prediction, attack paths, behaviour, AI, scoring, reporting | Not started |
 
 What works today:
 
@@ -36,18 +37,29 @@ What works today:
 - **SBOM**: a CycloneDX 1.5 document generated from the inventory, stored
   with SHA-256 digests, with history, download, comparison between versions,
   and an integrity check that also regenerates it from the snapshot.
+- **Code reachability** (Python): the repository's source is parsed, never
+  run, into a conservative call graph, and each known vulnerability gets one
+  of four results — *Reachable*, *Not confirmed*, *Unknown*, *Unsupported* —
+  with the path and source lines behind it.
 - Every result is labelled **OBSERVED** (read from a repository file or
   published by a named source), **INFERRED** (derived by a stated rule) or
   **UNKNOWN**. Versions that the files do not determine are shown as
   unresolved, never guessed.
 
 What a vulnerability finding means: the installed version number lies inside
-the versions an advisory publishes as affected. It does **not** say the
-vulnerable code is used or reachable, or how likely exploitation is. No
-finding does not mean safe. The SBOM is integrity-verifiable, not signed.
+the versions an advisory publishes as affected. No finding does not mean
+safe. The SBOM is integrity-verifiable, not signed.
 
-What does **not** exist yet: exploitability prediction, reachability, SBOM
-repair, fragility, attack paths, behaviour analysis, AI reasoning, dataset
+What a reachability result means: **static reachability is not
+exploitability.** *Reachable* says the source text refers to functionality an
+advisory identifies as affected; it does not say an attacker can trigger it.
+*Not confirmed* and *Unknown* do not mean safe. Advisories for Python packages
+rarely say which functions are affected, so most real findings are *Unknown*
+with evidence of how the package is used; see
+[docs/phase4.md](docs/phase4.md).
+
+What does **not** exist yet: exploitability prediction, SBOM repair,
+fragility, attack paths, behaviour analysis, AI reasoning, dataset
 validation, and the trust score. No risk or trust figures are produced or
 displayed.
 
@@ -106,59 +118,60 @@ npm test
 
 ## Verification status
 
-Phases 1 and 2 were validated in Docker by the project owner.
+Phases 1 to 3 were validated in Docker by the project owner.
 
-Phase 3 was developed in a sandbox that cannot reach PyPI, the npm registry,
+Phase 4 was developed in a sandbox that cannot reach PyPI, the npm registry,
 Docker Hub, the GitHub API or `api.osv.dev`. This is exactly what was and was
 not executed:
 
 | Check | Result |
 |---|---|
-| Backend test suite (838 tests: the 434 from Phases 1–2 and 404 new) | **Passed**, 94 % line+branch coverage. Python 3.13, mongomock 4.3.0, dependencies taken from their GitHub sources |
-| Matching, normalisation and provider tests on 14 real advisory records (10 from `github/advisory-database`, 4 from `pypa/advisory-database`) | **Passed** |
-| Live run: Uvicorn API + worker thread + real Redis + browser, on the real dependency files of `karthikmukesh19-gif/ShadowWatch` (commit `4c8057c`), with a local stand-in for the OSV API serving real records from `github/advisory-database` | **Passed** — sync, matching, evidence, SBOM generation, verification, download, re-generation, ownership checks (MongoDB replaced by mongomock) |
-| Frontend browser tests (62: 27 existing and 35 new, Playwright + Chromium) | **Passed** against a bundle built with esbuild from the project source |
+| Backend test suite (1,049 tests: the 838 from Phases 1–3 and 211 new) | **Passed**, 95 % line+branch coverage. Python 3.13, mongomock 4.3.0, dependencies taken from their GitHub sources |
+| Frontend browser tests (82: 62 existing and 20 new, Playwright + Chromium) | **Passed** against a bundle built with esbuild from the project source |
 | Frontend TypeScript check | **Passed** for all project source |
-| Independent review of the Phase 3 change by a separate reviewer; the 7 defects it confirmed were fixed, each with a regression test | **Done** |
+| Analyzer and graph builder on real repositories read from disk: ShadowWatch (38 Python files), FastAPI (1,167), PyMongo (440), pytest (274) | **Passed** — every file parsed; about 2–4 s per repository |
+| Live run: Uvicorn API + worker thread + real Redis + browser, on the real files of `karthikmukesh19-gif/ShadowWatch` (commit `4c8057c`), GitHub and OSV replaced by local stand-ins serving the real repository content and real GitHub advisory records | **Passed** — 34 findings: 0 reachable, 0 not confirmed, 6 unknown (the advisories name no functions), 28 unsupported (npm). MongoDB replaced by mongomock |
+| Independent review of the Phase 4 change by a separate reviewer; the 10 defects it confirmed were fixed, each with a regression test | **Done** |
 | `docker compose config` | **Valid** |
-| A request to the real OSV API | **Not run** (unreachable from the sandbox) |
-| `docker compose up --build` with the Phase 3 code | **Not run** |
+| `docker compose up --build` with the Phase 4 code | **Not run** |
+| Source fetched through the real GitHub API | **Not run** (unreachable from the sandbox) |
 | `npm install` / `npm run build` (Vite) | **Not run** |
-| Index migration on the existing MongoDB volume | **Not run** against a real server (tested on mongomock) |
+| Index creation for the four new collections on the existing MongoDB volume | **Not run** against a real server (tested on mongomock) |
+| Accuracy of the reachability results against a labelled benchmark | **Not measured** |
 
-**Before starting Phase 4**, run these and confirm they succeed:
+**Before starting Phase 5**, run these and confirm they succeed:
 
 ```bash
 docker compose up --build -d
 docker compose ps                                   # all five services up, backend and frontend healthy
 
-# backend tests and coverage (expected: 838 passed, about 94 %)
+# backend tests and coverage (expected: 1049 passed, about 95 %)
 docker run --rm -v "${PWD}/backend:/srv" -w /srv python:3.12-slim sh -c "pip install -q -r requirements-dev.txt && pytest --cov=app"
 
-# frontend
+# frontend (expected: 82 passed)
 cd frontend && npm install && npm run build && npm run test:install && npm test && cd ..
-
-# live provider check: the only step that contacts the real OSV service
-docker compose exec backend python -m app.collectors.providers.smoke pypi requests 2.19.1
 ```
 
 Then in the app, open the ShadowWatch project:
 
-1. **Overview → Run dependency analysis** (if the commit changed).
-2. **Vulnerabilities → Check for vulnerabilities.** The job should go
-   queued → running → completed, and the page should show the source (OSV),
-   the synchronisation time and the findings. Open one and compare it with
-   its page on osv.dev.
-3. **SBOM → Generate SBOM → Verify integrity → Download.**
+1. **Vulnerabilities → Check for vulnerabilities** (needed for the current snapshot).
+2. **Code reachability → Start analysis.** The job should go queued →
+   running → completed. Expect the Python findings (pymongo, python-jose,
+   python-dotenv) as *Unknown* with a path to where the package is used, and
+   the npm findings as *Unsupported*. Open one and follow a source link to GitHub.
+3. **Analyse again**: it should finish quickly and report that the stored
+   source was reused.
 
-The findings depend on what OSV publishes on the day and on the repository's
-current commit, so no expected numbers are given here. If `api.osv.dev` cannot
-be reached from the worker container, the job fails with
-`PROVIDER_UNREACHABLE` or `PROVIDER_TIMEOUT` and no findings are shown.
+The analysis makes one GitHub request per Python file (38 for ShadowWatch).
+Unauthenticated GitHub access allows 60 an hour, so set `GITHUB_TOKEN` in
+`.env`; without it a second repository, or a refresh, fails with
+`RATE_LIMITED` and the time the limit resets. OSV needs no key.
 
-Unauthenticated GitHub access allows 60 API requests an hour (an analysis of
-ShadowWatch uses 9). Set `GITHUB_TOKEN` in `.env` for regular use. OSV needs
-no key.
+To see a *Reachable* or *Not confirmed* result on a real repository, an
+advisory must name its affected functions. Add an entry to a mapping file and
+point `REACHABILITY_SYMBOL_MAPPINGS_FILE` at it (format in
+[docs/phase4.md](docs/phase4.md)); each entry needs a source URL that
+justifies it.
 
 ## Layout
 
@@ -177,7 +190,8 @@ scripts/      maintenance scripts (none yet)
 - [Dependency analysis](docs/dependency-analysis.md) — pipeline, supported files, classification rules, limits, limitations
 - [Security](docs/security.md) — controls for the platform and for analysing untrusted repositories
 - [Vulnerabilities and SBOM](docs/phase3.md) — providers, normalisation, matching rules, SBOM format, integrity verification, what Phase 3 does not do
-- [Database](docs/database.md) — all 31 collections, indexes, and which phase writes each
+- [Code reachability](docs/phase4.md) — source analysis, call graph, statuses, evidence, limits, what Phase 4 does not do
+- [Database](docs/database.md) — all 35 collections, indexes, and which phase writes each
 - [API](docs/api.md) — implemented and planned endpoints
 - [Roadmap](docs/roadmap.md) — phases and exit criteria
 
@@ -185,7 +199,8 @@ scripts/      maintenance scripts (none yet)
 
 TrustChain-X estimates, ranks, simulates and flags indicators. It does not
 claim to detect all zero-days or unknown vulnerabilities, to prove that a
-dependency is safe or that an SBOM is complete, to know whether a maintainer is malicious, to
+dependency is safe or that an SBOM is complete, to build a complete call
+graph, to decide exploitability from reachability, to know whether a maintainer is malicious, to
 guarantee future CVE prediction or attack success, or to certify a dataset as
 free of poisoning.
 

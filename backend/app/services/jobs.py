@@ -32,11 +32,14 @@ logger = logging.getLogger(__name__)
 VULNERABILITY_SYNC = "vulnerability_sync"
 VULNERABILITY_ANALYSIS = "vulnerability_analysis"
 SBOM_GENERATION = "sbom_generation"
+CODE_REACHABILITY_ANALYSIS = "code_reachability_analysis"
 
 STAGES: dict[str, tuple[str, ...]] = {
     VULNERABILITY_SYNC: ("QUEUED", "PROVIDER_QUERY", "RECORD_INGESTION", "MATCHING", "COMPLETED"),
     VULNERABILITY_ANALYSIS: ("QUEUED", "MATCHING", "COMPLETED"),
     SBOM_GENERATION: ("QUEUED", "SBOM_GENERATION", "SBOM_COMPARISON", "COMPLETED"),
+    CODE_REACHABILITY_ANALYSIS: ("QUEUED", "SOURCE_INVENTORY", "SOURCE_PARSING", "GRAPH_BUILDING", "SYMBOL_MAPPING", "REACHABILITY",
+                                 "COMPLETED"),
 }
 JOB_TYPES = tuple(STAGES)
 
@@ -58,6 +61,7 @@ class JobContext:
     settings: Settings
     providers: dict[str, Any]
     started: float
+    github: Any = None          # GitHubClient, for jobs that read repository files
 
     def check_deadline(self, limit_seconds: int) -> None:
         if time.monotonic() - self.started > limit_seconds:
@@ -156,12 +160,12 @@ def handler(job_type: str) -> Callable[[Handler], Handler]:
     return register
 
 
-def run_job(db: Database, settings: Settings, providers: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+def run_job(db: Database, settings: Settings, providers: dict[str, Any], job: dict[str, Any], github: Any = None) -> dict[str, Any]:
     """Execute one claimed job. Never raises: every outcome is recorded on the job."""
     # Imported here so that the service modules can register their handlers without an import cycle.
-    from app.services import sbom, vulnerabilities  # noqa: F401
+    from app.services import reachability, sbom, vulnerabilities  # noqa: F401
 
-    context = JobContext(db=db, settings=settings, providers=providers, started=time.monotonic())
+    context = JobContext(db=db, settings=settings, providers=providers, started=time.monotonic(), github=github)
     try:
         message, fields = _HANDLERS[job["type"]](context, job)
     except JobError as exc:

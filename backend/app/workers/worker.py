@@ -56,7 +56,7 @@ def process_available_jobs(settings: Settings, db: Any, github: GitHubClient, st
             if job is None:
                 break
             logger.info("Running %s job %s for project %s", job["type"], job["_id"], job["project_id"])
-            finished = jobs.run_job(db, settings, providers, job)
+            finished = jobs.run_job(db, settings, providers, job, github)
         logger.info("Job %s finished: %s", job["_id"], finished["state"])
         processed += 1
     return processed

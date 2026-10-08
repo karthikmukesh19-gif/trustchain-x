@@ -19,6 +19,11 @@ const STAGE_LABELS: Record<string, string> = {
   MATCHING: "Match versions",
   SBOM_GENERATION: "Generate",
   SBOM_COMPARISON: "Compare",
+  SOURCE_INVENTORY: "List source",
+  SOURCE_PARSING: "Parse",
+  GRAPH_BUILDING: "Build graph",
+  SYMBOL_MAPPING: "Map symbols",
+  REACHABILITY: "Search paths",
 };
 
 const JOB_NAMES: Record<string, string> = {
@@ -26,6 +31,7 @@ const JOB_NAMES: Record<string, string> = {
   vulnerability_sync: "A vulnerability check",
   vulnerability_analysis: "A vulnerability re-match",
   sbom_generation: "An SBOM generation",
+  code_reachability_analysis: "A code reachability analysis",
 };
 
 /**

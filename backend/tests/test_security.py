@@ -229,7 +229,9 @@ def test_indexes_enforce_unique_email(client, db):
 def test_all_declared_collections_have_indexes(client, db):
     from app.models.collections import ALL_COLLECTIONS, INDEXES
 
-    assert len(ALL_COLLECTIONS) == 31   # 29 from the original data model + vulnerability_syncs and vulnerability_sources (Phase 3)
+    # 29 from the original data model + vulnerability_syncs and vulnerability_sources (Phase 3)
+    # + source_files, source_symbols, code_edges and reachability_analyses (Phase 4)
+    assert len(ALL_COLLECTIONS) == 35
     for name in ALL_COLLECTIONS:
         assert len(db[name].index_information()) == len(INDEXES[name]) + 1  # + the _id index
 

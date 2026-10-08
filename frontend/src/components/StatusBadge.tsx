@@ -1,4 +1,4 @@
-import type { Basis, MatchStatus, MetadataStatus, Relationship, Severity } from "../utils/types";
+import type { Basis, EvidenceConfidence, MatchStatus, MetadataStatus, ReachabilityStatus, Relationship, Severity } from "../utils/types";
 
 type Tone = "good" | "warn" | "bad" | "neutral";
 
@@ -72,4 +72,27 @@ const MATCH_STATUS = {
 export function MatchStatusBadge({ status }: { status: MatchStatus }) {
   const view = MATCH_STATUS[status] ?? { tone: "neutral" as const, label: status };
   return <Badge tone={view.tone}>{view.label}</Badge>;
+}
+
+const REACHABILITY: Record<ReachabilityStatus, { tone: Tone; label: string; title: string }> = {
+  REACHABLE: { tone: "bad", label: "Reachable", title: "The source statically refers to functionality identified as affected. Not a statement about exploitability." },
+  NOT_CONFIRMED_REACHABLE: { tone: "neutral", label: "Not confirmed", title: "The analysed source does not establish a path to the affected functionality. Not a statement that it is safe." },
+  UNKNOWN: { tone: "warn", label: "Unknown", title: "Reachability could not be decided." },
+  UNSUPPORTED: { tone: "neutral", label: "Unsupported", title: "Source analysis is not implemented for this ecosystem." },
+};
+
+/** Static reachability of the affected functionality. Never "exploitable", never "safe". */
+export function ReachabilityBadge({ status }: { status: ReachabilityStatus }) {
+  const { tone, label, title } = REACHABILITY[status] ?? REACHABILITY.UNKNOWN;
+  return (
+    <span title={title}>
+      <Badge tone={tone}>{label}</Badge>
+    </span>
+  );
+}
+
+/** Evidence quality of a result. A dash when it does not apply (unknown, unsupported). */
+export function ConfidenceLabel({ confidence }: { confidence: EvidenceConfidence | null }) {
+  if (confidence === null) return <span className="text-faint" title="Not applicable: nothing was concluded">—</span>;
+  return <span className="font-mono text-[12px] font-medium" title="How directly the source text establishes the result. Not a likelihood of exploitation.">{confidence}</span>;
 }

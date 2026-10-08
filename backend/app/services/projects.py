@@ -167,12 +167,13 @@ def delete_project(db: Database, owner_id: ObjectId, project_id: str) -> bool:
     result = db[PROJECTS].delete_one({"_id": ObjectId(project_id), "owner_id": owner_id})
     if result.deleted_count == 1:
         # Local import: the analysis service depends on this module.
-        from app.services import sbom, vulnerabilities
+        from app.services import reachability, sbom, vulnerabilities
         from app.services.analysis import delete_project_analysis
 
         delete_project_analysis(db, ObjectId(project_id))
         vulnerabilities.delete_project_data(db, ObjectId(project_id))
         sbom.delete_project_data(db, ObjectId(project_id))
+        reachability.delete_project_data(db, ObjectId(project_id))
     return result.deleted_count == 1
 
 

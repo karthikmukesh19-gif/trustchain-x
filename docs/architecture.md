@@ -45,7 +45,7 @@ The stack is not negotiable. Secrets come from environment variables only.
         ┌────────────────┼────────────────┐
         ▼                ▼                ▼
  Repository        Dependency         SBOM Engine         BUILT, BUILT, BUILT (generate,
- Collector         Analyzer           & Verifier          verify, diff; repair: Phase 4)
+ Collector         Analyzer           & Verifier          verify, diff; repair: planned)
         └────────────────┼────────────────┘
                          ▼
                 Dependency Graph                          BUILT (prediction: Phase 6)
@@ -53,7 +53,7 @@ The stack is not negotiable. Secrets come from environment variables only.
         ┌────────────────┼──────────────────┐
         ▼                ▼                  ▼
  Vulnerability      Reachability      Attack Path         BUILT (known-advisory matching),
- Analysis           Analysis          Simulation          PLANNED, PLANNED (Phase 7)
+ Analysis           Analysis          Simulation          BUILT (static, Python), PLANNED (Phase 7)
         └────────────────┼──────────────────┘
                          ▼
               Behaviour Intelligence                      PLANNED (Phases 8, 9)
@@ -101,7 +101,9 @@ backend/app/
 ├── workers/         background worker process
 ├── analyzers/       language / package-manager detection, dependency parsers,
 │                    normalisation, resolution; vulnerabilities/ — version ordering, CVSS,
-│                    affected-range matching (reachability, fragility: PLANNED)
+│                    affected-range matching; source/ — source inventory and per-language
+│                    static analyzers (Python); reachability/ — import mapping, code graph,
+│                    advisory symbol mapping, path search (fragility: PLANNED)
 ├── graph/           dependency graph construction and path queries (propagation, attack paths: PLANNED)
 ├── sbom/            CycloneDX generation, canonical form and digests, diff
 │                    (parsing found SBOMs, reconstruction: PLANNED, Phase 4)
@@ -189,8 +191,22 @@ where they connect. SBOM verification and on-demand diffs run inside the
 request. Details are in [phase3.md](phase3.md).
 
 Phase 3 reports published advisories whose affected versions contain an
-observed dependency version. It does not predict exploitability, analyse
-reachability, simulate attack paths or compute any risk or trust score.
+observed dependency version. It does not predict exploitability, simulate
+attack paths or compute any risk or trust score.
+
+**Built (Phase 4)** — one further job type:
+
+```text
+code_reachability_analysis  SOURCE_INVENTORY → SOURCE_PARSING → GRAPH_BUILDING
+                            → SYMBOL_MAPPING → REACHABILITY
+```
+
+The worker fetches the snapshot's Python files by git blob id, parses them
+with `ast` (nothing is executed), builds a conservative code graph, and for
+every vulnerability match decides `REACHABLE`, `NOT_CONFIRMED_REACHABLE`,
+`UNKNOWN` or `UNSUPPORTED`, with the path and source locations as evidence.
+Static reachability is not exploitability. Details are in
+[phase4.md](phase4.md).
 
 **Target (later phases)** — the full pipeline extends the same job system
 with these stages, and pushes transitions over `/ws/projects/{project_id}`
@@ -231,6 +247,7 @@ repository code on the host.
 | Vulnerability provider access — endpoint from configuration only, `https`, host allow-list, no redirects, response size caps, validated ids, bounded retries | `config/settings.py`, `collectors/providers/osv.py` | BUILT |
 | Rate limit on job starts and provider health checks | `security/rate_limit.py` | BUILT (in-process) |
 | SBOM integrity — canonical form, SHA-256 digests, regeneration check. Integrity-verifiable, not signed | `sbom/canonical.py`, `services/sbom.py` | BUILT |
+| Source analysis without execution — files fetched by validated blob id, parsed with `ast`; bounded files, bytes, syntax nodes, lookups, edges and run time | `analyzers/source/`, `analyzers/reachability/`, `services/reachability.py` | BUILT |
 | Sandboxed execution of repository code | — | Not needed so far: no phase executes repository code. Required before any that does |
 | WebSocket authentication | `websocket/` | PLANNED (Phase 9) |
 
@@ -281,7 +298,8 @@ training process, baseline, metrics and limitations (`docs/ml.md`, Phase 5+).
 | R2 | Cloning hostile or huge repositories | Resource exhaustion, code execution | Shallow clone in a sandbox container, size and time limits, never execute repo code |
 | R3 | Resolving transitive dependencies without running package managers | Incomplete graphs | Prefer lockfiles; otherwise resolve via registry metadata APIs and mark the result `resolution: estimated` |
 | R4 | Vulnerability sources disagree | Wrong matches | One source (OSV) is built, behind a provider interface; source, timestamp and raw record are kept per advisory, and a disagreement between the provider's report and the local range evaluation is stored as `CONFLICT`. Further sources: planned |
-| R5 | Static reachability is undecidable in general | False confidence | Three-way result (`REACHABLE` / `NOT_REACHABLE` / `UNKNOWN`), per-language precision documented |
+| R5 | Static reachability is undecidable in general | False confidence | Built: four statuses (`REACHABLE` / `NOT_CONFIRMED_REACHABLE` / `UNKNOWN` / `UNSUPPORTED`), no "not reachable" or "safe" result, unresolved uses recorded, confidence tied to how each edge was bound. Precision not yet measured against a benchmark |
+| R10 | Advisories rarely publish affected functions (none of 11,584 PyPI entries examined did) | Most real Python findings are `UNKNOWN` | Operator mapping file with required source URL; dependency-usage evidence shown for every finding; no symbol is inferred from advisory text |
 | R6 | No labelled ground truth for "risky dependency" or "anomalous maintainer" | Unevaluable models | Start with transparent scoring; build labelled sets from historical advisories and known incidents; report baselines and limits |
 | R7 | LLM hallucination | Invented evidence | Evidence-id grounding validator; measure hallucination rate |
 | R8 | Trust-score weights are judgement calls | Arbitrary scores | Weights configurable and published; component scores always shown; controlled experiments in evaluation |

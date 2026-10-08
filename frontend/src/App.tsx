@@ -9,6 +9,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
+import { ReachabilityPage } from "./pages/ReachabilityPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { SbomPage } from "./pages/SbomPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/projects/:id/dependencies" element={<DependenciesPage />} />
           <Route path="/projects/:id/graph" element={<GraphPage />} />
           <Route path="/projects/:id/vulnerabilities" element={<VulnerabilitiesPage />} />
+          <Route path="/projects/:id/reachability" element={<ReachabilityPage />} />
           <Route path="/projects/:id/sbom" element={<SbomPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>

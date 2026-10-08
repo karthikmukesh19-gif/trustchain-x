@@ -146,7 +146,7 @@ No response contains an exploitability, risk or trust figure.
 
 | Method | Path | Result |
 |---|---|---|
-| GET | `/api/projects/{id}/jobs` | `?type=<comma-separated job types>&limit(≤50)` → `{active, items}`. `active` is the job currently queued or running for the project, of any type, or `null`. Job types: `dependencies`, `vulnerability_sync`, `vulnerability_analysis`, `sbom_generation` |
+| GET | `/api/projects/{id}/jobs` | `?type=<comma-separated job types>&limit(≤50)` → `{active, items}`. `active` is the job currently queued or running for the project, of any type, or `null`. Job types: `dependencies`, `code_reachability_analysis`, `vulnerability_sync`, `vulnerability_analysis`, `sbom_generation` |
 
 Job documents have the Phase 2 shape (`state`, `stage`, `stage_index`,
 `stage_count`, `stages`, `message`, `error: {code, message, retry_at}`,
@@ -156,6 +156,33 @@ Deleting a project also deletes its vulnerability matches, synchronisation
 records, SBOMs, SBOM components and SBOM diffs. Stored advisories are shared
 reference data and are kept.
 
+## Implemented (Phase 4) — code reachability
+
+All routes require the project's owner; any other caller gets 404. No
+response contains an exploitability, risk or trust figure.
+
+| Method | Path | Result |
+|---|---|---|
+| POST | `/api/projects/{id}/code-reachability/analyze` | 202 `{job}`. Queues `code_reachability_analysis` for the latest snapshot. Optional body `{"refresh_source": true}` re-reads the source instead of reusing what is stored. 409 without a snapshot, without a vulnerability check for that snapshot, or when another job is active. Rate limited |
+| GET | `/api/projects/{id}/code-reachability` | `?skip&limit(≤500)&status=REACHABLE\|NOT_CONFIRMED_REACHABLE\|UNKNOWN\|UNSUPPORTED&confidence=HIGH\|MEDIUM\|LOW\|NONE&ecosystem&q` → `{job, snapshot, has_vulnerability_scan, vulnerability_scan_matched_at, analysis, supported_ecosystems, statuses, total, skip, limit, items}`. `analysis` is the completed analysis of the latest snapshot or `null`; items are sorted by status (reachable first), then severity |
+| GET | `/api/projects/{id}/code-reachability/{finding_id}` | One finding with `explanation`, `affected_symbols`, `observed` and `inferred` |
+| GET | `/api/projects/{id}/code-reachability/{finding_id}/path` | `{status, confidence, path_kind, path, meaning}`. `path_kind` is `AFFECTED_SYMBOL` (a path to an affected name), `DEPENDENCY_USAGE` (only a path to a use of the package) or `null` |
+| GET | `/api/projects/{id}/code-reachability/source/{snapshot_id}` | `?skip&limit(≤500)&parse_status&q` → `{analysis, source_available, total, items}`: the source files considered for that snapshot, how each was handled, and its import statements with their dependency mapping |
+
+A list item: `id`, `match_id`, `advisory_id`, `aliases`, `severity`,
+`ecosystem`, `dependency`, `resolved_version`, `relationship`, `status`,
+`confidence`, `reason`, `symbol_mapping`, `matched_symbol`, `usage_level`,
+`evidence {source_file, line, symbol, text, path[]}`, `analyzed_at`,
+`analyzer_version`.
+
+Job error codes: `NOT_ANALYSED`, `NOT_SCANNED`, `PROJECT_NOT_FOUND`,
+`RATE_LIMITED` (with `retry_at`), `INTEGRITY_MISMATCH`, `TIMEOUT`,
+`INTERNAL_ERROR`, and the other GitHub codes of Phase 2. Statuses, reasons and
+confidence are defined in [phase4.md](phase4.md).
+
+Deleting a project also deletes its reachability analyses, source records,
+graph and findings.
+
 ## Planned
 
 These endpoints are part of the target API and are **not implemented**;
@@ -164,7 +191,6 @@ and `/dependency-graph` paths were replaced by the Phase 2 routes above.
 
 | Method | Path | Phase |
 |---|---|---|
-| GET | `/api/projects/{id}/reachability` | 7 |
 | POST | `/api/projects/{id}/sbom/repair` | 4 |
 | GET | `/api/projects/{id}/fragility` | 5 |
 | GET | `/api/projects/{id}/predictions` | 5–6 |

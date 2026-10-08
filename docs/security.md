@@ -47,10 +47,25 @@ Every repository is untrusted input.
 | Hostile content in SBOM output | Component data comes from the validated Phase 2 inventory. The download is served as an attachment with `nosniff` |
 | Secrets | No provider credential exists for OSV. Raw advisory records are stored; request headers and tokens are never logged |
 
+## Code reachability (Phase 4)
+
+| Threat | Control |
+|---|---|
+| Code execution | Source files are parsed with Python's `ast` module into a syntax tree. They are never compiled to run, imported, evaluated, installed or built. `setup.py`, `conftest.py` and package `__init__.py` files are read like any other file. No shell command is built from repository content |
+| Path traversal | Files are fetched by git blob id (validated hex) from the snapshot's listing; nothing is read from or written to disk by path. Paths were validated when the snapshot was taken and are validated again when selecting source; they are used only as labels |
+| Tampered content | Each file is checked against its git blob id; a mismatch fails the job |
+| Resource exhaustion | Limits on source files, bytes per file, total bytes, syntax nodes per file, records per file, attribute-chain length, module-lookup steps, graph edges, stored evidence text and run time. Star-import chains are resolved once and cycles end. Deeply nested, huge, binary or wrongly encoded input yields a parse status, not a crash |
+| Hostile strings | Names and source lines are length-limited before storage and rendered as text. Links to the repository are built from the registered repository URL and an encoded path |
+| Operator mapping file | A local file path from configuration, never a URL; size-capped; every entry validated (advisory id, dotted symbol names, `https` source URL); invalid entries ignored and reported |
+| Misleading results | Four explicit statuses; none means "safe" or "exploitable". A missing path becomes `UNKNOWN` whenever source was not fully analysed, dynamic code could reach the package, or the import cannot be attributed. Only an exact match of a published affected name is `REACHABLE` |
+| Authorisation | Findings, paths and source inventories are scoped to the owning project; another user's ids answer 404 |
+| Abuse of GitHub quota | Job starts are rate limited; parsed source is reused for a snapshot, so re-runs make no GitHub requests |
+
 ## Known gaps
 
 - Rate-limit counters are per backend process (Redis-backed counters: Phase 14).
 - SBOMs are not cryptographically signed.
+- The reachability analysis has not been measured against a labelled benchmark; see its limitations in phase4.md.
 - One vulnerability source; no scheduled refresh of advisory data.
 - No token revocation list; tokens are short-lived.
 - The browser stores the token in `sessionStorage`; a strict CSP limits the XSS exposure.

@@ -1,5 +1,6 @@
 import type {
-  JobListing, JobType, MatchDetail, ProjectJob, SbomComponentList, SbomDiff, SbomListing, SbomVerification, VulnerabilityList,
+  JobListing, JobType, MatchDetail, ProjectJob, ReachabilityFindingDetail, ReachabilityList, SbomComponentList, SbomDiff, SbomListing,
+  SbomVerification, VulnerabilityList,
 } from "../utils/types";
 import { api } from "./api";
 
@@ -37,6 +38,29 @@ export async function listVulnerabilities(projectId: string, query: Vulnerabilit
 
 export async function getVulnerabilityMatch(projectId: string, matchId: string): Promise<MatchDetail> {
   const { data } = await api.get<MatchDetail>(`${base(projectId)}/vulnerabilities/${encodeURIComponent(matchId)}`);
+  return data;
+}
+
+// --- code reachability -------------------------------------------------------
+
+export const startReachabilityAnalysis = (projectId: string) => startJob(`${base(projectId)}/code-reachability/analyze`);
+
+export interface ReachabilityQuery {
+  skip?: number;
+  limit?: number;
+  status?: string;
+  confidence?: string;
+  ecosystem?: string;
+  q?: string;
+}
+
+export async function listReachability(projectId: string, query: ReachabilityQuery = {}): Promise<ReachabilityList> {
+  const { data } = await api.get<ReachabilityList>(`${base(projectId)}/code-reachability`, { params: clean(query) });
+  return data;
+}
+
+export async function getReachabilityFinding(projectId: string, findingId: string): Promise<ReachabilityFindingDetail> {
+  const { data } = await api.get<ReachabilityFindingDetail>(`${base(projectId)}/code-reachability/${encodeURIComponent(findingId)}`);
   return data;
 }
 

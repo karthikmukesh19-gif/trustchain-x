@@ -41,6 +41,10 @@ VULNERABILITY_MATCHES = "vulnerability_matches"
 VULNERABILITY_SYNCS = "vulnerability_syncs"
 VULNERABILITY_SOURCES = "vulnerability_sources"
 CODE_REACHABILITY = "code_reachability"
+SOURCE_FILES = "source_files"
+SOURCE_SYMBOLS = "source_symbols"
+CODE_EDGES = "code_edges"
+REACHABILITY_ANALYSES = "reachability_analyses"
 ATTACK_PATHS = "attack_paths"
 MAINTAINERS = "maintainers"
 MAINTAINER_PROFILES = "maintainer_profiles"
@@ -95,7 +99,17 @@ INDEXES: dict[str, list[Index]] = {
     ],
     VULNERABILITY_SYNCS: [idx(("project_id", A), ("started_at", D)), idx(("provider", A), ("started_at", D))],
     VULNERABILITY_SOURCES: [idx(("name", A), unique=True)],
-    CODE_REACHABILITY: [idx(("snapshot_id", A), ("match_id", A), unique=True)],
+    CODE_REACHABILITY: [
+        idx(("snapshot_id", A), ("match_id", A), unique=True),
+        idx(("project_id", A), ("snapshot_id", A), ("status_rank", D), ("severity_rank", D)),
+    ],
+    SOURCE_FILES: [idx(("analysis_id", A), ("path", A), unique=True), idx(("project_id", A), ("snapshot_id", A))],
+    SOURCE_SYMBOLS: [idx(("analysis_id", A), ("symbol_id", A), unique=True), idx(("project_id", A), ("snapshot_id", A), ("path", A))],
+    CODE_EDGES: [idx(("analysis_id", A), ("source", A)), idx(("analysis_id", A), ("target", A)), idx(("project_id", A), ("snapshot_id", A))],
+    REACHABILITY_ANALYSES: [
+        idx(("project_id", A), ("snapshot_id", A), ("analyzer_version", A), unique=True),
+        idx(("project_id", A), ("completed_at", D)),
+    ],
     ATTACK_PATHS: [idx(("project_id", A), ("snapshot_id", A), ("path_risk", D))],
     MAINTAINERS: [idx(("platform", A), ("login", A), unique=True)],
     MAINTAINER_PROFILES: [idx(("repository_id", A), ("maintainer_id", A), unique=True)],

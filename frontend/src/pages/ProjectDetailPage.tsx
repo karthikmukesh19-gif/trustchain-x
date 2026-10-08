@@ -16,14 +16,13 @@ import { errorMessage } from "../utils/errors";
 import { formatCount, formatDate, formatDateTime, formatSize } from "../utils/format";
 
 /** Evidence layers that later phases will add to this page. None of them exist yet. */
-const PLANNED_ANALYSIS = [
-  { name: "Code reachability analysis", phase: 4 },
-  { name: "Self-healing SBOM (verification of external SBOMs and repair)", phase: 4 },
+const PLANNED_ANALYSIS: { name: string; phase: number | null }[] = [
   { name: "Dependency fragility and predicted risk", phase: 5 },
   { name: "Attack-path simulation", phase: 7 },
   { name: "Maintainer and commit behaviour", phase: 8 },
   { name: "Cross-layer AI reasoning", phase: 10 },
   { name: "Trust score and security report", phase: 12 },
+  { name: "Self-healing SBOM (verification of external SBOMs and repair)", phase: null },
 ];
 
 const PENDING_POLL_MS = 2000;
@@ -233,15 +232,15 @@ export function ProjectDetailPage() {
       <section className="card mt-6 p-5">
         <h2 className="text-base font-semibold">Not yet available</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted">
-          Dependency analysis, vulnerability matching and SBOMs are available from the tabs above. Whether vulnerable code
-          is actually reachable, how likely exploitation is, and any risk or trust figure are not assessed: the parts of
-          the platform that would produce them have not been built.
+          Dependency analysis, vulnerability matching, static code reachability (Python) and SBOMs are available from the
+          tabs above. How likely exploitation is, and any risk or trust figure, are not assessed: the parts of the platform
+          that would produce them have not been built.
         </p>
         <ol className="mt-4 divide-y divide-line border-t border-line">
           {PLANNED_ANALYSIS.map((item) => (
             <li key={item.name} className="flex items-center justify-between gap-3 py-2.5 text-sm">
               <span>{item.name}</span>
-              <span className="shrink-0 font-mono text-xs text-faint">Phase {item.phase} · not built</span>
+              <span className="shrink-0 font-mono text-xs text-faint">{item.phase === null ? "Not scheduled" : `Phase ${item.phase}`} · not built</span>
             </li>
           ))}
         </ol>

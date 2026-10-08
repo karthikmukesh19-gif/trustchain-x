@@ -9,7 +9,8 @@ ends with tests, updated docs and a phase report.
 | 1 | Foundation: React/Vite, FastAPI, MongoDB, Docker Compose, authentication, project management, GitHub repository registration, dashboard, health checks | `docker compose up --build` healthy; backend tests green; React build succeeds; register → login → create project works end to end | **Done** — validated in Docker with a real GitHub repository |
 | 2 | Repository and dependency engine: snapshot through the GitHub API, language and package-manager detection, dependency parsers (Python, JavaScript/TypeScript, Java, Go, Rust, C/C++), normalisation (PURL), direct/transitive classification, dependency graph; analysis job system and worker pipeline; dependency and graph pages | Parsers, detection, graph, job lifecycle and API tested; browser tests pass; Docker stack analyses a real repository | **Code complete — see "Phase 2 verification" below** |
 | 3 | Vulnerability intelligence and SBOM foundation: provider abstraction (OSV), normalised advisories, idempotent ingestion with sync metadata, deterministic version matching with evidence, CycloneDX SBOM generation, digest-based integrity verification, SBOM history and diff; job types, APIs, Vulnerabilities and SBOM pages | Matching tested on real advisory records; SBOM deterministic and verifiable; browser tests pass; Docker stack checks a real repository against the live provider | **Code complete — see "Phase 3 verification" below** |
-| 4 | Self-healing SBOM: discovery and parsing of SBOMs found in a repository (CycloneDX + SPDX), comparison with the generated SBOM, reconstruction, integrity score, repair log. (Generation, digests, verification and diff were built in Phase 3) | Missing/extra/mismatch detection measured on seeded SBOMs; original never modified | Planned |
+| 4 | Code reachability analysis: source inventory, Python AST analysis, import → dependency mapping, conservative call graph, advisory symbol mapping, graph reachability with evidence and confidence; job, APIs, Code reachability page | Analyzer, graph and engine tested on fixtures; statuses REACHABLE / NOT_CONFIRMED_REACHABLE / UNKNOWN / UNSUPPORTED; browser tests pass; Docker stack analyses a real repository | **Code complete — see "Phase 4 verification" below** |
+| — | Self-healing SBOM: discovery and parsing of SBOMs found in a repository (CycloneDX + SPDX), comparison with the generated SBOM, reconstruction, integrity score, repair log. (Generation, digests, verification and diff were built in Phase 3) | Missing/extra/mismatch detection measured on seeded SBOMs; original never modified | Planned; not yet assigned a phase number |
 | 5 | Dependency fragility: leverage, centrality, churn, maintenance, age, release frequency, vulnerability history; explainable model; predicted risk | Feature definitions, baseline and limitations documented | Planned |
 | 6 | Predictive graph: risk propagation, candidate-version comparison, future configuration analysis, risk ranking | Version recommendation tested on fixtures | Planned |
 | 7 | Attack-path simulation (defensive, graph-based only): reachability graph, path generation, risk and impact scoring, visualisation | Paths verified on constructed graphs | Planned |
@@ -28,14 +29,22 @@ coverage).
 
 ## Phase 3 verification
 
-What has been executed and what has not is recorded in the README section
-"Verification status". Phase 4 must not start until every item listed there
-as outstanding has been run successfully.
+Reported as validated by the project owner before Phase 4 began.
 
-Moved out of Phase 3 (not built): **code reachability** → Phase 7 with
-attack-path analysis; **additional vulnerability sources** (NVD, GitHub
+Not built in Phase 3: **additional vulnerability sources** (NVD, GitHub
 Advisories directly) and cross-source conflict reporting → before Phase 5
 depends on vulnerability history.
+
+## Phase 4 verification
+
+What has been executed and what has not is recorded in the README section
+"Verification status". Phase 5 must not start until every item listed there
+as outstanding has been run successfully.
+
+Phase 4 was originally planned as the self-healing SBOM and became code
+reachability at the project owner's direction. The self-healing SBOM is still
+planned; the numbering of the phases after 4 is as originally drafted and may
+be revised.
 
 ## Cross-cutting work scheduled later
 

@@ -309,7 +309,7 @@ export interface DependencyGraphData {
 
 // --- Phase 3: vulnerability intelligence and SBOM ------------------------------
 
-export type JobType = "dependencies" | "vulnerability_sync" | "vulnerability_analysis" | "sbom_generation";
+export type JobType = "dependencies" | "vulnerability_sync" | "vulnerability_analysis" | "sbom_generation" | "code_reachability_analysis";
 
 /** A background job of any type, as returned by /jobs. */
 export interface ProjectJob {
@@ -600,4 +600,162 @@ export interface SbomComponentList {
   limit: number;
   items: SbomComponent[];
   vulnerability_linkage: SbomLinkage;
+}
+
+// --- code reachability (Phase 4) ----------------------------------------------
+
+export type ReachabilityStatus = "REACHABLE" | "NOT_CONFIRMED_REACHABLE" | "UNKNOWN" | "UNSUPPORTED";
+export type EvidenceConfidence = "HIGH" | "MEDIUM" | "LOW";
+export type UsageLevel = "CALLED" | "REFERENCED" | "IMPORTED_ONLY" | "NOT_OBSERVED";
+
+export interface SourceLocation {
+  source_file: string | null;
+  line: number | null;
+  col?: number | null;
+  end_line?: number | null;
+  text: string | null;
+}
+
+export interface AffectedSymbol {
+  symbol: string;
+  module_only: boolean;
+  source: "ADVISORY" | "OPERATOR_SUPPLIED";
+  origin: string;
+  note: string | null;
+}
+
+export interface MatchedSymbol extends AffectedSymbol {
+  observed: string;
+  match: "EXACT" | "NAME";
+}
+
+export interface ReachabilityFinding {
+  id: string;
+  match_id: string;
+  advisory_source: string;
+  advisory_id: string;
+  aliases: string[];
+  summary: string | null;
+  severity: Severity;
+  ecosystem: string;
+  dependency: string;
+  normalized_name: string;
+  resolved_version: string;
+  relationship: Relationship | null;
+  status: ReachabilityStatus;
+  confidence: EvidenceConfidence | null;
+  reason: string;
+  symbol_mapping: "ADVISORY" | "OPERATOR_SUPPLIED" | "SYMBOL_MAPPING_UNKNOWN";
+  matched_symbol: MatchedSymbol | null;
+  evidence: { source_file: string | null; line: number | null; symbol: string | null; text: string | null; path: string[] };
+  usage_level: UsageLevel | null;
+  analyzed_at: string;
+  analyzer_version: string;
+}
+
+export interface CodePathNode {
+  id: string;
+  kind: "module" | "class" | "function" | "method" | "external";
+  label: string;
+  path: string | null;
+  line: number | null;
+  is_test: boolean;
+}
+
+export interface CodePathEdge {
+  kind: "calls" | "references" | "imports" | "constructs";
+  source: string;
+  target: string;
+  confidence: EvidenceConfidence;
+  basis: string;
+  via: string | null;
+  hops: string[] | null;
+  evidence: SourceLocation | null;
+}
+
+export interface CodePath {
+  nodes: CodePathNode[];
+  edges: CodePathEdge[];
+  length: number;
+  truncated: boolean;
+  start_is_entry: boolean;
+  through_tests_only: boolean;
+  confidence: EvidenceConfidence;
+}
+
+export interface UsageSite extends SourceLocation {
+  symbol: string;
+  used: string;
+  kind: string;
+  confidence: EvidenceConfidence;
+  basis: string;
+  is_test: boolean;
+}
+
+export interface DependencyUsage {
+  level: UsageLevel;
+  imported: boolean;
+  import_sites: UsageSite[];
+  import_site_count: number;
+  use_sites: UsageSite[];
+  use_site_count: number;
+  used_names: string[];
+}
+
+export interface ReachabilityFindingDetail extends ReachabilityFinding {
+  snapshot_id: string;
+  analysis_id: string;
+  vulnerability_id: string;
+  explanation: string;
+  confidence_meaning: string;
+  affected_symbols: AffectedSymbol[];
+  observed: {
+    dependency_usage: DependencyUsage | null;
+    path: CodePath | null;
+    usage_path: CodePath | null;
+    dynamic_sites: ({ reason: string; expr: string } & SourceLocation)[] | null;
+  };
+  inferred: { status: ReachabilityStatus; reason: string; notes: string[] };
+}
+
+export interface ReachabilityAnalysis {
+  id: string;
+  snapshot_id: string;
+  commit_sha: string;
+  branch: string | null;
+  analyzer_version: string;
+  completed_at: string;
+  source_analysed_at?: string;
+  source_complete: boolean;
+  incomplete_reasons: { reason: string; files: number }[];
+  source: {
+    languages: string[];
+    files_found: number;
+    files_analysed: number;
+    files_parsed: number;
+    test_files: number;
+    by_status: Record<string, number>;
+    other_languages: Record<string, number>;
+  };
+  graph: { modules: number; classes: number; functions: number; external_symbols: number; edges: number; unresolved: number;
+           unresolved_by_reason: Record<string, number> };
+  findings: { findings: number; by_status: Record<ReachabilityStatus, number>; by_reason: Record<string, number>;
+              with_symbol_mapping: number; dependencies_used: number; matches_not_evaluated: Record<string, number> };
+  vulnerability_scan_matched_at: string | null;
+  operator_mappings: number;
+  operator_mapping_problems: string[];
+}
+
+export interface ReachabilityList {
+  job: ProjectJob | null;
+  snapshot: { id: string; commit_sha: string; branch: string | null } | null;
+  has_vulnerability_scan: boolean;
+  vulnerability_scan_matched_at: string | null;
+  analysis: ReachabilityAnalysis | null;
+  supported_ecosystems: string[];
+  statuses: ReachabilityStatus[];
+  total: number;
+  skip: number;
+  limit: number;
+  items: ReachabilityFinding[];
 }

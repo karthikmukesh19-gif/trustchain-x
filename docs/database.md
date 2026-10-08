@@ -2,7 +2,7 @@
 
 Database: `trustchain_x` (configurable through `MONGODB_DB`).
 
-All 31 collections are declared, with their indexes, in
+All 35 collections are declared, with their indexes, in
 `backend/app/models/collections.py`; `ensure_indexes()` creates the indexes at
 start-up and is safe to run repeatedly. **Declared does not mean populated.**
 The "Written from" column says which phase starts writing a collection.
@@ -282,11 +282,88 @@ Index: `{project_id: 1, base_sbom_id: 1, target_sbom_id: 1}` unique.
   Phases 1–2. `ensure_indexes()` drops the obsolete ones at start-up. No
   existing document is changed or removed.
 
+### `reachability_analyses` (Phase 4)
+
+One document per (project, snapshot, analyzer version).
+
+| Field | Notes |
+|---|---|
+| `project_id`, `repository_id`, `snapshot_id`, `commit_sha`, `branch`, `job_id` | |
+| `analyzer_version`, `state` | `RUNNING` until the first run completes, then `COMPLETE` |
+| `source_state` | `COMPLETE`, `REBUILDING` (stored source is being replaced; not reused if a run stops here) or `REMOVED` (a newer snapshot was analysed) |
+| `source_complete`, `incomplete_reasons` | whether all application source was analysed, and why not |
+| `source` | files found / analysed / parsed, by status, test files, other languages |
+| `graph` | counts of modules, classes, functions, external names, edges by kind, unresolved uses by reason, and `mapping` (unmapped imports, ambiguous and shadowed dependencies) |
+| `findings` | counts by status and reason |
+| `operator_mappings`, `operator_mapping_problems`, `vulnerability_scan_matched_at`, `github_requests`, timestamps | |
+
+Indexes: `{project_id: 1, snapshot_id: 1, analyzer_version: 1}` unique;
+`{project_id: 1, completed_at: -1}`.
+
+### `source_files` (Phase 4)
+
+One row per candidate source file: `analysis_id`, `project_id`,
+`repository_id`, `snapshot_id`, `path`, `language`, `file_size`,
+`git_blob_sha`, `is_test`, `analysed`, `parse_status`, `parse_error`,
+`module`, `discovered_symbols_count`, `discovered_imports_count`,
+`discovered_usages_count`, `records_truncated`, and `imports[]` — each import
+statement with line, text, resolution, dependency and resolved version.
+File contents are not stored.
+
+Indexes: `{analysis_id: 1, path: 1}` unique; `{project_id: 1, snapshot_id: 1}`.
+
+### `source_symbols` (Phase 4)
+
+Graph nodes: `symbol_id` (`app.client:fetch`, or `ext:requests.get` for a
+dependency name), `kind` (`module` \| `class` \| `function` \| `method` \|
+`external`), `name`, `qualname`, `module`, `path`, `line`, `end_line`,
+`parent`, `is_test`; for external nodes `qualified`, `top_level`, `package`,
+`dependency_node_ids`, `mapping_basis`.
+
+Indexes: `{analysis_id: 1, symbol_id: 1}` unique;
+`{project_id: 1, snapshot_id: 1, path: 1}`.
+
+### `code_edges` (Phase 4)
+
+Graph edges and unresolved uses: `kind` (`imports` \| `calls` \| `references`
+\| `constructs` \| `unresolved`), `source`, `target` (`null` when unresolved),
+`confidence`, `basis`, `via`, `hops`, `evidence {source_file, line, col,
+end_line, text}`; unresolved rows carry `reason` and `expr`.
+
+Indexes: `{analysis_id: 1, source: 1}`; `{analysis_id: 1, target: 1}`;
+`{project_id: 1, snapshot_id: 1}`.
+
+### `code_reachability` (Phase 4)
+
+One finding per vulnerability match of a snapshot.
+
+| Field | Notes |
+|---|---|
+| `project_id`, `repository_id`, `snapshot_id`, `analysis_id`, `job_id`, `match_id`, `vulnerability_id`, `dependency_id`, `dependency_node_id` | |
+| `advisory_source`, `advisory_id`, `aliases`, `summary`, `severity` | copied from the match |
+| `ecosystem`, `dependency`, `normalized_name`, `resolved_version`, `relationship` | |
+| `status`, `status_rank`, `confidence`, `confidence_meaning`, `reason`, `explanation` | confidence is `null` for `UNKNOWN` and `UNSUPPORTED` |
+| `symbol_mapping`, `affected_symbols`, `matched_symbol` | `ADVISORY` \| `OPERATOR_SUPPLIED` \| `SYMBOL_MAPPING_UNKNOWN`, with each symbol's origin |
+| `usage_level` | `CALLED` \| `REFERENCED` \| `IMPORTED_ONLY` \| `NOT_OBSERVED` |
+| `evidence` | `{source_file, line, symbol, text, path[]}` |
+| `observed` | `{dependency_usage, path, usage_path, dynamic_sites}` — what the source shows |
+| `inferred` | `{status, reason, notes[]}` — the conclusion and the inferences behind it |
+| `analyzed_at`, `analyzer_version` | |
+
+Indexes: `{snapshot_id: 1, match_id: 1}` unique;
+`{project_id: 1, snapshot_id: 1, status_rank: -1, severity_rank: -1}`.
+
+### Other changes in Phase 4
+
+- `projects` gains `latest_reachability_analysis_id`.
+- `analysis_jobs` gains the job type `code_reachability_analysis`.
+- `code_reachability` gains a second index; the existing one is unchanged.
+  No existing document is changed.
+
 ## Collections declared for later phases
 
 | Collection | Purpose | Key fields (planned) | Indexes | Written from |
 |---|---|---|---|---|
-| `code_reachability` | `REACHABLE` / `NOT_REACHABLE` / `UNKNOWN` per match | `snapshot_id`, `match_id`, `classification`, evidence | `{snapshot_id, match_id}` unique | Phase 7 |
 | `attack_paths` | Simulated paths (graph-based, defensive) | `project_id`, `snapshot_id`, `nodes`, `path_risk`, `impact` | `{project_id, snapshot_id, path_risk:-1}` | Phase 7 |
 | `maintainers` | Public contributor identity | `platform`, `login` | `{platform, login}` unique | Phase 8 |
 | `maintainer_profiles` | Behaviour baseline per repo and maintainer | `repository_id`, `maintainer_id`, baseline statistics | `{repository_id, maintainer_id}` unique | Phase 8 |
@@ -311,6 +388,7 @@ Index: `{project_id: 1, base_sbom_id: 1, target_sbom_id: 1}` unique.
   limited to public data.
 - Deleting a project removes the project and its analysis data (jobs,
   snapshots, dependencies, graphs, vulnerability matches and synchronisation
-  records, SBOMs with their components and diffs). The shared `repositories`,
+  records, SBOMs with their components and diffs, reachability analyses with
+  their source records, graph and findings). The shared `repositories`,
   `dependency_versions` and `vulnerabilities` documents and the audit trail
   are kept.

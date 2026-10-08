@@ -108,6 +108,16 @@ class Settings(BaseModel):
     vulnerability_max_record_bytes: int = Field(default=2_097_152, ge=1024)    # one advisory (2 MiB)
     vulnerability_sync_timeout_seconds: int = Field(default=600, ge=5)
 
+    # Code reachability. Source files are fetched by git blob id and parsed as data; nothing is executed.
+    reachability_max_files: int = Field(default=2000, ge=1)                    # source files analysed per run
+    reachability_max_file_bytes: int = Field(default=524_288, ge=1024)         # one source file (512 KiB)
+    reachability_max_total_bytes: int = Field(default=33_554_432, ge=1024)     # all source files together (32 MiB)
+    reachability_max_nodes_per_file: int = Field(default=200_000, ge=1000)     # syntax-tree nodes visited per file
+    reachability_max_edges: int = Field(default=300_000, ge=1000)              # edges kept in the code graph
+    reachability_timeout_seconds: int = Field(default=600, ge=5)
+    # Operator-maintained mapping of advisories to affected functions. Empty by default; never a URL.
+    reachability_symbol_mappings_file: str = ""
+
     @field_validator("app_env")
     @classmethod
     def _known_env(cls, value: str) -> str:
@@ -210,6 +220,13 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         "ANALYSIS_MAX_DEPENDENCIES": "analysis_max_dependencies",
         "ANALYSIS_TIMEOUT_SECONDS": "analysis_timeout_seconds",
         "ANALYSIS_STALE_JOB_SECONDS": "analysis_stale_job_seconds",
+        "REACHABILITY_MAX_FILES": "reachability_max_files",
+        "REACHABILITY_MAX_FILE_BYTES": "reachability_max_file_bytes",
+        "REACHABILITY_MAX_TOTAL_BYTES": "reachability_max_total_bytes",
+        "REACHABILITY_MAX_NODES_PER_FILE": "reachability_max_nodes_per_file",
+        "REACHABILITY_MAX_EDGES": "reachability_max_edges",
+        "REACHABILITY_TIMEOUT_SECONDS": "reachability_timeout_seconds",
+        "REACHABILITY_SYMBOL_MAPPINGS_FILE": "reachability_symbol_mappings_file",
         "OSV_API_URL": "osv_api_url",
         "VULNERABILITY_TIMEOUT_SECONDS": "vulnerability_timeout_seconds",
         "VULNERABILITY_BATCH_SIZE": "vulnerability_batch_size",
