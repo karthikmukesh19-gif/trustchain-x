@@ -65,12 +65,12 @@ INDEXES: dict[str, list[Index]] = {
     ],
     REPOSITORIES: [idx(("key", A), unique=True)],
     REPOSITORY_SNAPSHOTS: [
-        idx(("repository_id", A), ("commit_sha", A), unique=True),
-        idx(("project_id", A), ("created_at", D)),
+        idx(("project_id", A), ("commit_sha", A), ("analyzer_version", A), unique=True),
+        idx(("project_id", A), ("collected_at", D)),
     ],
     DEPENDENCIES: [
-        idx(("snapshot_id", A), ("purl", A), unique=True),
-        idx(("project_id", A), ("ecosystem", A), ("package_name", A)),
+        idx(("snapshot_id", A), ("node_id", A), unique=True),
+        idx(("project_id", A), ("snapshot_id", A), ("ecosystem", A), ("normalized_name", A)),
     ],
     DEPENDENCY_VERSIONS: [idx(("ecosystem", A), ("package_name", A), ("version", A), unique=True)],
     DEPENDENCY_GRAPHS: [idx(("snapshot_id", A), unique=True), idx(("project_id", A), ("created_at", D))],

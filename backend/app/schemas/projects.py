@@ -63,6 +63,7 @@ class ProjectOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_analysis: datetime | None
+    latest_snapshot_id: str | None = None
     repository: RepositoryOut | None
 
 

@@ -84,6 +84,8 @@ def create_project(
         "created_at": now,
         "updated_at": now,
         "last_analysis": None,
+        "latest_snapshot_id": None,
+        "active_job_id": None,
     }
     try:
         project["_id"] = db[PROJECTS].insert_one(project).inserted_id
@@ -163,6 +165,11 @@ def delete_project(db: Database, owner_id: ObjectId, project_id: str) -> bool:
     if not ObjectId.is_valid(project_id):
         return False
     result = db[PROJECTS].delete_one({"_id": ObjectId(project_id), "owner_id": owner_id})
+    if result.deleted_count == 1:
+        # Local import: the analysis service depends on this module.
+        from app.services.analysis import delete_project_analysis
+
+        delete_project_analysis(db, ObjectId(project_id))
     return result.deleted_count == 1
 
 
@@ -198,5 +205,6 @@ def to_public(project: dict[str, Any], repository: dict[str, Any] | None) -> dic
         "created_at": project["created_at"],
         "updated_at": project["updated_at"],
         "last_analysis": project.get("last_analysis"),
+        "latest_snapshot_id": str(project["latest_snapshot_id"]) if project.get("latest_snapshot_id") else None,
         "repository": repo_out,
     }
