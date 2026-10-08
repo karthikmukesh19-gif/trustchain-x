@@ -47,9 +47,9 @@ export function DashboardPage() {
         <StatTile
           label="Projects analysed"
           value={`${data.projects_analysed}/${data.projects_total}`}
-          note="Analysis engine not yet available"
+          note="Dependency analysis completed at least once"
         />
-        <StatTile label="Trust score" value="—" note="Produced once a project has been analysed" />
+        <StatTile label="Trust score" value="—" note="Not built yet: needs the later analysis phases" />
       </div>
 
       {!hasProjects ? (
@@ -62,8 +62,8 @@ export function DashboardPage() {
               </Link>
             }
           >
-            Register a public GitHub repository to start. Its metadata is fetched straight away; dependency, SBOM,
-            vulnerability and behaviour analysis will appear here as the analysis engine is delivered.
+            Register a public GitHub repository to start. Its metadata is fetched straight away, and you can then run a
+            dependency analysis on it. Vulnerability, SBOM and behaviour analysis are not built yet.
           </EmptyState>
         </div>
       ) : (

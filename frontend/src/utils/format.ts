@@ -30,8 +30,34 @@ const ACTION_LABELS: Record<string, string> = {
   "project.create": "Project created",
   "project.delete": "Project deleted",
   "project.refresh_metadata": "Repository metadata refreshed",
+  "analysis.dependencies.request": "Dependency analysis requested",
+  "analysis.dependencies.finish": "Dependency analysis finished",
 };
 
 export function describeAction(action: string): string {
   return ACTION_LABELS[action] ?? action;
+}
+
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function formatPercent(share: number): string {
+  const percent = share * 100;
+  return percent > 0 && percent < 0.1 ? "<0.1%" : `${percent.toFixed(1)}%`;
+}
+
+export function shortSha(sha: string | null | undefined): string {
+  return sha ? sha.slice(0, 10) : "—";
+}
+
+const ECOSYSTEM_LABELS: Record<string, string> = {
+  pypi: "PyPI", npm: "npm", maven: "Maven", golang: "Go", cargo: "Cargo", vcpkg: "vcpkg", conan: "Conan", cmake: "CMake",
+};
+
+export function ecosystemLabel(ecosystem: string): string {
+  return ECOSYSTEM_LABELS[ecosystem] ?? ecosystem;
 }

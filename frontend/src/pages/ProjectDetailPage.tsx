@@ -3,16 +3,20 @@ import type { ReactNode } from "react";
 import { FiArrowLeft, FiExternalLink, FiRefreshCw, FiTrash2 } from "react-icons/fi";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
+import { AnalysisStatusCard } from "../components/analysis/AnalysisStatusCard";
+import { ProjectTabs } from "../components/analysis/ProjectTabs";
+import { DependencySummaryCard, LanguagesCard, PackageManagersCard, SnapshotCard } from "../components/analysis/SnapshotSections";
 import { ErrorNotice, PageHeader, Spinner } from "../components/Feedback";
-import { AnalysisBadge, Badge, MetadataBadge } from "../components/StatusBadge";
+import { Badge, MetadataBadge } from "../components/StatusBadge";
+import { useAnalysisStatus } from "../hooks/useAnalysisStatus";
 import { useAsync } from "../hooks/useAsync";
+import { getSnapshot } from "../services/analysis";
 import { deleteProject, getProject, refreshMetadata } from "../services/projects";
 import { errorMessage } from "../utils/errors";
 import { formatCount, formatDate, formatDateTime, formatSize } from "../utils/format";
 
-/** Evidence the analysis engine will add to this page, in delivery order. */
+/** Evidence layers that later phases will add to this page. None of them exist yet. */
 const PLANNED_ANALYSIS = [
-  { name: "Dependencies and dependency graph", phase: 2 },
   { name: "Vulnerabilities and code reachability", phase: 3 },
   { name: "SBOM verification and reconstruction", phase: 4 },
   { name: "Dependency fragility and predicted risk", phase: 5 },
@@ -42,6 +46,23 @@ export function ProjectDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const polls = useRef(0);
+
+  // Results are loaded only when a completed analysis exists, and again whenever a run finishes.
+  const snapshot = useAsync(async () => {
+    try {
+      return await getSnapshot(id);
+    } catch (caught) {
+      const status = (caught as { response?: { status?: number } }).response?.status;
+      if (status === 404) return null; // not analysed yet: an expected state, not an error
+      throw caught;
+    }
+  }, [id]);
+  const analysis = useAnalysisStatus(id, (state) => {
+    if (state === "completed") {
+      void snapshot.reload({ silent: true });
+      void reload({ silent: true });
+    }
+  });
 
   // Metadata is fetched just after registration; keep checking until it settles.
   const pending = project?.repository?.metadata_status === "PENDING";
@@ -125,6 +146,8 @@ export function ProjectDetailPage() {
         )}
       </PageHeader>
 
+      <ProjectTabs projectId={id} />
+
       {actionError && (
         <div className="mb-4">
           <ErrorNotice message={actionError} />
@@ -167,7 +190,7 @@ export function ProjectDetailPage() {
             {metadata.description && <p className="mt-4 max-w-3xl text-sm text-ink-soft">{metadata.description}</p>}
             <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3 lg:grid-cols-4">
               <Fact label="Default branch" mono>{metadata.default_branch ?? "—"}</Fact>
-              <Fact label="Primary language">{metadata.primary_language ?? "—"}</Fact>
+              <Fact label="Primary language (GitHub)">{metadata.primary_language ?? "—"}</Fact>
               <Fact label="Licence" mono>{metadata.license ?? "—"}</Fact>
               <Fact label="Visibility">{metadata.visibility ?? "—"}</Fact>
               <Fact label="Stars" mono>{formatCount(metadata.stars)}</Fact>
@@ -186,14 +209,32 @@ export function ProjectDetailPage() {
         )}
       </section>
 
-      <section className="card mt-6 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-base font-semibold">Supply chain analysis</h2>
-          <AnalysisBadge lastAnalysis={project.last_analysis} />
+      <div className="mt-6">
+        <AnalysisStatusCard analysis={analysis} />
+      </div>
+
+      {snapshot.error && !snapshot.data && (
+        <div className="mt-6">
+          <ErrorNotice message={snapshot.error} onRetry={() => void snapshot.reload()} />
         </div>
+      )}
+
+      {snapshot.data && (
+        <div className="mt-6 space-y-6">
+          <SnapshotCard snapshot={snapshot.data} />
+          <DependencySummaryCard snapshot={snapshot.data} projectId={id} />
+          <div className="grid gap-6 lg:grid-cols-2">
+            <LanguagesCard snapshot={snapshot.data} />
+            <PackageManagersCard snapshot={snapshot.data} />
+          </div>
+        </div>
+      )}
+
+      <section className="card mt-6 p-5">
+        <h2 className="text-base font-semibold">Not yet available</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted">
-          This project has not been analysed. The analysis engine is still being built, so no trust score, risk or
-          vulnerability figures exist for it yet. The sections below will appear here as each part is delivered.
+          Dependency analysis is the first evidence layer. No vulnerability, risk or trust figures exist for this project:
+          the parts of the platform that would produce them have not been built.
         </p>
         <ol className="mt-4 divide-y divide-line border-t border-line">
           {PLANNED_ANALYSIS.map((item) => (

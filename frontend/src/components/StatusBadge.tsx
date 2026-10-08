@@ -1,4 +1,4 @@
-import type { MetadataStatus } from "../utils/types";
+import type { Basis, MetadataStatus, Relationship } from "../utils/types";
 
 type Tone = "good" | "warn" | "bad" | "neutral";
 
@@ -32,4 +32,26 @@ export function MetadataBadge({ status }: { status: MetadataStatus }) {
 
 export function AnalysisBadge({ lastAnalysis }: { lastAnalysis: string | null }) {
   return lastAnalysis ? <Badge tone="good">Analysed</Badge> : <Badge tone="neutral">Not analysed</Badge>;
+}
+
+const BASIS: Record<Basis, { tone: Tone; title: string }> = {
+  OBSERVED: { tone: "good", title: "Read directly from a repository file" },
+  INFERRED: { tone: "warn", title: "Derived by a documented rule from what the files contain" },
+  UNKNOWN: { tone: "neutral", title: "The repository evidence does not establish this" },
+};
+
+/** OBSERVED / INFERRED / UNKNOWN. The label is always shown as text, never by colour alone. */
+export function BasisBadge({ basis }: { basis: Basis }) {
+  const { tone, title } = BASIS[basis] ?? BASIS.UNKNOWN;
+  return (
+    <span title={title}>
+      <Badge tone={tone}>{basis}</Badge>
+    </span>
+  );
+}
+
+const RELATIONSHIP_LABEL: Record<Relationship, string> = { DIRECT: "Direct", TRANSITIVE: "Transitive", UNKNOWN: "Unknown" };
+
+export function RelationshipLabel({ relationship }: { relationship: Relationship }) {
+  return <span className="font-medium">{RELATIONSHIP_LABEL[relationship] ?? relationship}</span>;
 }

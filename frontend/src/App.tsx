@@ -3,6 +3,8 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute, PublicOnlyRoute } from "./components/ProtectedRoute";
 import { AppLayout } from "./layouts/AppLayout";
 import { DashboardPage } from "./pages/DashboardPage";
+import { DependenciesPage } from "./pages/DependenciesPage";
+import { GraphPage } from "./pages/GraphPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
@@ -23,6 +25,8 @@ export default function App() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:id" element={<ProjectDetailPage />} />
+          <Route path="/projects/:id/dependencies" element={<DependenciesPage />} />
+          <Route path="/projects/:id/graph" element={<GraphPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Route>
