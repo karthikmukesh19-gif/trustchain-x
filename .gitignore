@@ -1,0 +1,32 @@
+# secrets / local config
+.env
+*.env.local
+backend/.env
+frontend/.env
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# node
+node_modules/
+frontend/dist/
+
+# analysis workspaces and generated output
+reports/*
+!reports/.gitkeep
+datasets/*
+!datasets/.gitkeep
+!datasets/README.md
+.workspaces/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
