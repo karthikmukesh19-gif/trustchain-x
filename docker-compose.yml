@@ -1,0 +1,93 @@
+name: trustchain-x
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+
+x-backend-env: &backend-env
+  APP_ENV: ${APP_ENV:-development}
+  JWT_SECRET: ${JWT_SECRET:-}
+  MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017}
+  MONGODB_DB: trustchain_x
+  REDIS_URL: redis://redis:6379/0
+  GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+  CORS_ORIGINS: http://localhost:${FRONTEND_PORT:-5173}
+
+services:
+  mongodb:
+    <<: *hardening
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-}
+    volumes:
+      - mongo-data:/data/db
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    # Not published to the host: only services on the internal network can reach it.
+
+  redis:
+    <<: *hardening
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    <<: *hardening
+    build: ./backend
+    environment: *backend-env
+    depends_on:
+      mongodb: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    networks: [internal]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    mem_limit: 512m
+    cpus: 1.0
+
+  worker:
+    <<: *hardening
+    build: ./backend
+    command: ["python", "-m", "app.workers.worker"]
+    environment: *backend-env
+    depends_on:
+      mongodb: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [internal]
+    healthcheck:
+      disable: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    mem_limit: 512m
+    cpus: 1.0
+
+  frontend:
+    <<: *hardening
+    build: ./frontend
+    depends_on:
+      backend: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-5173}:8080"
+    networks: [internal]
+    mem_limit: 128m
+
+networks:
+  internal:
+
+volumes:
+  mongo-data:
