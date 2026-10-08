@@ -52,6 +52,17 @@ class Settings(BaseModel):
 
     worker_heartbeat_seconds: int = Field(default=10, ge=1)
 
+    # Repository analysis limits. A repository beyond any of them is refused
+    # with a structured error instead of being partially analysed.
+    analysis_max_repo_kb: int = Field(default=2_097_152, ge=1)          # size reported by GitHub (2 GiB)
+    analysis_max_files: int = Field(default=25_000, ge=1)               # entries in the file listing
+    analysis_max_manifests: int = Field(default=300, ge=1)              # dependency files read per analysis
+    analysis_max_manifest_bytes: int = Field(default=8_388_608, ge=1024)  # one dependency file (8 MiB)
+    analysis_max_total_bytes: int = Field(default=67_108_864, ge=1024)    # all dependency files together (64 MiB)
+    analysis_max_dependencies: int = Field(default=30_000, ge=1)
+    analysis_timeout_seconds: int = Field(default=300, ge=5)
+    analysis_stale_job_seconds: int = Field(default=900, ge=30)
+
     @field_validator("app_env")
     @classmethod
     def _known_env(cls, value: str) -> str:
@@ -124,6 +135,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         "GITHUB_API_URL": "github_api_url",
         "GITHUB_TIMEOUT_SECONDS": "github_timeout_seconds",
         "WORKER_HEARTBEAT_SECONDS": "worker_heartbeat_seconds",
+        "ANALYSIS_MAX_REPO_KB": "analysis_max_repo_kb",
+        "ANALYSIS_MAX_FILES": "analysis_max_files",
+        "ANALYSIS_MAX_MANIFESTS": "analysis_max_manifests",
+        "ANALYSIS_MAX_MANIFEST_BYTES": "analysis_max_manifest_bytes",
+        "ANALYSIS_MAX_TOTAL_BYTES": "analysis_max_total_bytes",
+        "ANALYSIS_MAX_DEPENDENCIES": "analysis_max_dependencies",
+        "ANALYSIS_TIMEOUT_SECONDS": "analysis_timeout_seconds",
+        "ANALYSIS_STALE_JOB_SECONDS": "analysis_stale_job_seconds",
     }
     for key, field in simple.items():
         raw = env.get(key, "").strip()
