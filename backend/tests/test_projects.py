@@ -241,7 +241,7 @@ def test_refresh_metadata_recovers_after_failure(client, auth_headers, github):
     assert refreshed.status_code == 200
     assert refreshed.json()["repository"]["metadata_status"] == "FETCHED"
     assert refreshed.json()["default_branch"] == "main"
-    assert len(github.requests) == 2
+    assert len(github.requests) == 4  # the failing request was retried twice before giving up
 
 
 def test_failed_refresh_keeps_previously_fetched_metadata(client, auth_headers, github):

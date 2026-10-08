@@ -232,3 +232,22 @@ def test_all_declared_collections_have_indexes(client, db):
     assert len(ALL_COLLECTIONS) == 29
     for name in ALL_COLLECTIONS:
         assert len(db[name].index_information()) == len(INDEXES[name]) + 1  # + the _id index
+
+
+def test_index_migration_tolerates_another_process_dropping_first(db, monkeypatch):
+    """The API and the worker migrate at the same time; losing that race must not stop start-up."""
+    from pymongo.errors import OperationFailure
+
+    from app.models.database import ensure_indexes
+
+    db.repository_snapshots.create_index([("repository_id", 1), ("commit_sha", 1)], unique=True)
+    real_drop = db.repository_snapshots.drop_index
+
+    def drop_after_someone_else(name, *args, **kwargs):
+        real_drop(name)
+        raise OperationFailure("index not found with name [%s]" % name, 27)
+
+    monkeypatch.setattr(db.repository_snapshots, "drop_index", drop_after_someone_else)
+    ensure_indexes(db)
+    assert "repository_id_1_commit_sha_1" not in db.repository_snapshots.index_information()
+    assert "project_id_1_commit_sha_1_analyzer_version_1" in db.repository_snapshots.index_information()

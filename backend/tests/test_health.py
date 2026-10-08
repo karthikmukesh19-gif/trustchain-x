@@ -1,7 +1,5 @@
 import threading
 
-import mongomock
-
 from app.config.settings import load_settings
 from app.workers import worker
 from app.workers.heartbeat import HEARTBEAT_KEY, beat
@@ -56,12 +54,10 @@ def test_health_endpoints_do_not_require_authentication(client):
     assert client.get("/api/health/ready").status_code == 200
 
 
-def test_worker_publishes_heartbeat_until_stopped():
+def test_worker_heartbeat_loop_publishes_until_stopped():
     settings = load_settings({**TEST_ENV, "WORKER_HEARTBEAT_SECONDS": "1"})
     redis_client = FakeRedis()
-    db = mongomock.MongoClient()[settings.mongodb_db]
     stop = threading.Event()
-
     original_set = redis_client.set
 
     def set_then_stop(*args, **kwargs):
@@ -70,21 +66,17 @@ def test_worker_publishes_heartbeat_until_stopped():
         return result
 
     redis_client.set = set_then_stop
-    beats = worker.run(settings, redis_client, db, stop)
-    assert beats == 1
+    assert worker.heartbeat_loop(settings, redis_client, stop) == 1
     assert redis_client.get(HEARTBEAT_KEY) is not None
 
 
-def test_worker_survives_redis_outage():
-    import redis
-
+def test_worker_heartbeat_survives_redis_outage():
     settings = load_settings({**TEST_ENV, "WORKER_HEARTBEAT_SECONDS": "1"})
-    db = mongomock.MongoClient()[settings.mongodb_db]
     stop = threading.Event()
 
     class Broken:
         def set(self, *_a, **_k):
             stop.set()
-            raise redis.ConnectionError("down")
+            raise ConnectionError("down")
 
-    assert worker.run(settings, Broken(), db, stop) == 0
+    assert worker.heartbeat_loop(settings, Broken(), stop) == 0

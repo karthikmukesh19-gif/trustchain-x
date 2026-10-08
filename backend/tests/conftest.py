@@ -11,7 +11,10 @@ for its three external systems:
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import time
+from pathlib import Path
 
 import httpx
 import mongomock
@@ -53,6 +56,7 @@ class FakeRedis:
 
     def __init__(self) -> None:
         self.store: dict[str, tuple[bytes, float | None]] = {}
+        self.queues: dict[str, list[str]] = {}
         self.available = True
 
     def _check(self) -> None:
@@ -79,8 +83,72 @@ class FakeRedis:
             return None
         return value
 
+    def lpush(self, key: str, value: str) -> int:
+        self._check()
+        self.queues.setdefault(key, []).insert(0, value)
+        return len(self.queues[key])
+
+    def brpop(self, key: str, timeout: int = 0):
+        self._check()
+        queue = self.queues.get(key) or []
+        return (key.encode(), queue.pop().encode()) if queue else None
+
     def close(self) -> None:
         pass
+
+
+class FakeRepository:
+    """An in-memory git repository served through the GitHub REST endpoints the analyser uses."""
+
+    def __init__(self, files: dict[str, bytes | str], branch: str = "main") -> None:
+        self.files = {path: content.encode() if isinstance(content, str) else content for path, content in files.items()}
+        self.branch = branch
+        self.extra_entries: list[dict] = []     # raw tree entries appended as-is (hostile paths, symlinks, ...)
+        self.listed_sizes: dict[str, int] = {}  # size to report for a path without storing that much content
+        self.truncated = False
+        self.tamper: set[str] = set()           # paths whose content is served corrupted
+        self.size_kb: int | None = None
+
+    def blob_id(self, path: str) -> str:
+        from app.collectors.github import git_blob_id
+
+        return git_blob_id(self.files[path])
+
+    @property
+    def commit_sha(self) -> str:
+        digest = hashlib.sha1()
+        for path in sorted(self.files):
+            digest.update(path.encode() + b"\0" + self.blob_id(path).encode())
+        return digest.hexdigest()
+
+    @property
+    def tree_sha(self) -> str:
+        return hashlib.sha1(b"tree" + self.commit_sha.encode()).hexdigest()
+
+    def respond(self, path: str) -> httpx.Response | None:
+        parts = path.strip("/").split("/")
+        if len(parts) < 3 or parts[0] != "repos":
+            return None
+        rest = parts[3:]
+        if not rest:
+            size = self.size_kb if self.size_kb is not None else sum(len(c) for c in self.files.values()) // 1024
+            return httpx.Response(200, json={**GITHUB_REPO_PAYLOAD, "default_branch": self.branch, "size": size})
+        if rest[0] == "commits":
+            return httpx.Response(200, json={"sha": self.commit_sha, "commit": {
+                "message": "Fixture commit\n\nbody", "tree": {"sha": self.tree_sha},
+                "committer": {"date": "2026-01-02T03:04:05Z"}}})
+        if rest[:2] == ["git", "trees"]:
+            entries = [{"path": p, "mode": "100644", "type": "blob", "sha": self.blob_id(p),
+                        "size": self.listed_sizes.get(p, len(c))} for p, c in sorted(self.files.items())]
+            return httpx.Response(200, json={"sha": rest[2], "tree": entries + self.extra_entries, "truncated": self.truncated})
+        if rest[:2] == ["git", "blobs"]:
+            for p, content in self.files.items():
+                if self.blob_id(p) == rest[2]:
+                    body = content + b"tampered" if p in self.tamper else content
+                    return httpx.Response(200, json={"encoding": "base64", "size": len(body),
+                                                     "content": base64.encodebytes(body).decode()})
+            return httpx.Response(404, json={"message": "Not Found"})
+        return None
 
 
 class GitHubStub:
@@ -92,11 +160,20 @@ class GitHubStub:
         self.payload: object = dict(GITHUB_REPO_PAYLOAD)
         self.headers: dict[str, str] = {}
         self.error: Exception | None = None
+        self.repo: FakeRepository | None = None
+        self.fail_paths: dict[str, tuple[int, dict[str, str]]] = {}   # path fragment -> (status, headers)
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         if self.error is not None:
             raise self.error
+        for fragment, (status, headers) in self.fail_paths.items():
+            if fragment in request.url.path:
+                return httpx.Response(status, json={"message": "simulated"}, headers=headers)
+        if self.repo is not None and self.status == 200:
+            response = self.repo.respond(request.url.path)
+            if response is not None:
+                return response
         return httpx.Response(self.status, json=self.payload, headers=self.headers)
 
 
@@ -127,12 +204,14 @@ def github():
 
 @pytest.fixture
 def app(settings, mongo, fake_redis, github):
-    return create_app(
+    application = create_app(
         settings,
         mongo_client=mongo,
         redis_client=fake_redis,
         github_transport=httpx.MockTransport(github.handler),
     )
+    application.state.github.sleep = lambda _seconds: None  # no real back-off waits in tests
+    return application
 
 
 @pytest.fixture
@@ -160,3 +239,20 @@ def other_headers(client):
     response = register(client, email="bob@example.com", full_name="Bob Example")
     assert response.status_code == 201, response.text
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def load_tree(name: str) -> dict[str, bytes]:
+    """Every file under tests/fixtures/<name>, keyed by repository-relative path."""
+    root = FIXTURES / name
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob("*"))
+            if p.is_file() and p.name not in {"README.md", "FILES.tsv"}}
+
+
+def run_worker(app) -> int:
+    """Run the worker's job loop once against the application's own database and GitHub client."""
+    from app.workers.worker import process_available_jobs
+
+    return process_available_jobs(app.state.settings, app.state.db, app.state.github)
