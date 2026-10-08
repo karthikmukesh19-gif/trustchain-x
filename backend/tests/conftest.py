@@ -23,6 +23,10 @@ from fastapi.testclient import TestClient
 
 from app.config.settings import load_settings
 from app.main import create_app
+from tests import mongomock_compat
+
+# PyMongo >= 4.11 and mongomock <= 4.3.0 disagree about bulk_write; see the module for details.
+mongomock_compat.apply()
 
 TEST_ENV = {
     "APP_ENV": "test",
