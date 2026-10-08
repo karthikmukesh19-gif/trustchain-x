@@ -16,7 +16,8 @@ test.describe("dependencies page", () => {
     await expect(page.getByText("npm 3 · PyPI 3")).toBeVisible();
     await expect(page.getByText("npm 3 · pip 3")).toBeVisible();
     await expect(page.getByText("4c8057c3bb")).toBeVisible();
-    await expect(page.locator("main")).not.toContainText(/trust score|vulnerab|CVE-/i);
+    // Scoped to the page content: the project tabs above it now include a "Vulnerabilities" tab.
+    await expect(page.getByTestId("project-content")).not.toContainText(/trust score|vulnerab|CVE-/i);
   });
 
   test("the table lists each dependency with its classification and source", async ({ page }) => {

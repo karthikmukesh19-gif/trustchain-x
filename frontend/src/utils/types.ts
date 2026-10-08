@@ -306,3 +306,298 @@ export interface DependencyGraphData {
   stats: GraphStats;
   paths?: string[][];
 }
+
+// --- Phase 3: vulnerability intelligence and SBOM ------------------------------
+
+export type JobType = "dependencies" | "vulnerability_sync" | "vulnerability_analysis" | "sbom_generation";
+
+/** A background job of any type, as returned by /jobs. */
+export interface ProjectJob {
+  id: string;
+  project_id: string;
+  type: JobType;
+  state: JobState;
+  stage: string;
+  stage_index: number;
+  stage_count: number;
+  stages?: string[];
+  message: string;
+  error: { code: string; message: string; retry_at?: string } | null;
+  summary: Record<string, unknown> | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface JobListing {
+  active: ProjectJob | null;
+  items: ProjectJob[];
+}
+
+export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
+export type MatchStatus = "AFFECTED" | "UNSUPPORTED" | "CONFLICT";
+
+export interface CvssRecord {
+  type: string;
+  vector: string;
+  version: string | null;
+  base_score: number | null;
+  score_origin: string | null;
+}
+
+export interface VulnerabilityMatch {
+  id: string;
+  dependency_node_id: string;
+  source: string;
+  source_id: string;
+  aliases: string[];
+  group_key: string;
+  summary: string | null;
+  ecosystem: string;
+  package_name: string;
+  normalized_name: string;
+  matched_version: string;
+  relationship: Relationship | null;
+  depth: number | null;
+  match_status: MatchStatus;
+  classification: "OBSERVED" | null;
+  confidence: "HIGH" | "LOW" | "UNDETERMINED";
+  confidence_meaning: string;
+  severity: Severity;
+  severity_source: string | null;
+  cvss: CvssRecord[] | null;
+  affected_range: string | null;
+  fixed_version: string | null;
+  fixed_versions: string[];
+  matched_at: string;
+  first_matched_at?: string;
+}
+
+export interface MatchEvidence {
+  evidence_type: string;
+  source: { provider: string; source_id: string; url: string | null; modified_at: string | null; record_sha256: string | null; retrieved_at: string | null };
+  observed: {
+    package: string;
+    normalized_name: string;
+    ecosystem: string;
+    installed_version: string;
+    purl: string | null;
+    version_basis: Basis | null;
+    version_reason: string | null;
+    relationship: Relationship | null;
+    depth: number | null;
+    declared_in: { source_file: string | null; line: number | null; declaration: string | null; file_kind: string | null; git_blob_sha: string | null }[];
+  };
+  match: {
+    comparator: string | null;
+    range_type: string | null;
+    affected_range: string | null;
+    introduced: string | null;
+    fixed: string | null;
+    last_affected: string | null;
+    limit: string | null;
+    events: Record<string, string>[];
+    version_listed_by_source: boolean;
+    provider_reported: boolean | null;
+    explanation: string;
+    source_range_note: string | null;
+  };
+}
+
+export interface Advisory {
+  id: string;
+  source: string;
+  source_id: string;
+  source_url: string | null;
+  aliases: string[];
+  summary: string | null;
+  details: string | null;
+  severity: Severity;
+  severity_source: string | null;
+  cvss: CvssRecord[] | null;
+  cwe_ids: string[];
+  references: { type: string | null; url: string }[];
+  published_at: string | null;
+  modified_at: string | null;
+  withdrawn_at: string | null;
+  first_seen_at: string | null;
+  ingested_at: string | null;
+}
+
+export interface MatchDetail {
+  match: VulnerabilityMatch & { evidence: MatchEvidence };
+  vulnerability: Advisory | null;
+}
+
+export interface VulnerabilityScan {
+  snapshot_id: string;
+  commit_sha: string;
+  matched_at: string;
+  matcher_version: string;
+  dependencies_total: number;
+  dependencies_checked: number;
+  dependencies_unresolved: number;
+  dependencies_unsupported_ecosystem: number;
+  unsupported_ecosystems: Record<string, number>;
+  advisories_considered: number;
+  advisories_withdrawn_skipped: number;
+  affected_matches: number;
+  affected_dependencies: number;
+  distinct_vulnerabilities: number;
+  unsupported_matches: number;
+  conflict_matches: number;
+  by_severity: Record<Severity, number>;
+  reported_but_not_stored: { dependency: string; source_id: string }[];
+  reported_but_not_stored_count: number;
+  intelligence: { sync_id: string; provider: string; status: string; completed_at: string | null; records_seen: number | null; records_failed: number | null } | null;
+}
+
+export interface VulnerabilitySync {
+  id: string;
+  provider: string;
+  status: "running" | "completed" | "partial" | "failed";
+  started_at: string;
+  completed_at: string | null;
+  packages_queried: number;
+  packages_unsupported: number;
+  packages_unresolved: number;
+  records_seen: number;
+  records_inserted: number;
+  records_updated: number;
+  records_unchanged: number;
+  records_failed: number;
+  errors: { source_id: string; code: string; message: string }[];
+  error_summary: string | null;
+}
+
+export interface VulnerabilityList {
+  job: ProjectJob | null;
+  providers: string[];
+  snapshot: { id: string; commit_sha: string; branch: string; collected_at: string } | null;
+  scan: VulnerabilityScan | null;
+  sync: VulnerabilitySync | null;
+  total: number;
+  skip: number;
+  limit: number;
+  items: VulnerabilityMatch[];
+}
+
+export interface SbomLinkage {
+  components_with_matches: number;
+  affected_matches: number;
+  latest_match_at: string | null;
+}
+
+export interface SbomRecord {
+  id: string;
+  snapshot_id: string;
+  commit_sha: string;
+  branch: string | null;
+  version: number;
+  previous_sbom_id: string | null;
+  format: string;
+  spec_version: string;
+  media_type: string;
+  serial_number: string;
+  generator: { name: string; version: string };
+  generated_at: string;
+  component_count: number;
+  relationship_count: number;
+  unresolved_components: number;
+  components_with_hashes: number;
+  completeness: string;
+  digest_algorithm: string;
+  canonicalization: string;
+  content_digest: string;
+  document_digest: string;
+  document_size: number;
+  last_verification: { valid: boolean; verified_at: string; failed_checks: string[] } | null;
+  vulnerability_linkage?: SbomLinkage;
+}
+
+export interface SbomListing {
+  job: ProjectJob | null;
+  latest: SbomRecord | null;
+  history: SbomRecord[];
+  has_inventory: boolean;
+  latest_snapshot_id: string | null;
+}
+
+export interface SbomDiffItem {
+  ecosystem: string;
+  name: string;
+  change: "ADDED" | "REMOVED" | "CHANGED";
+  change_type?: "version" | "metadata";
+  old_versions: (string | null)[];
+  new_versions: (string | null)[];
+  old_version?: string | null;
+  new_version?: string | null;
+  fields?: { field: string; old: unknown; new: unknown; version: string | null }[];
+}
+
+export interface SbomDiffSummary {
+  added: number;
+  removed: number;
+  changed: number;
+  version_changes: number;
+  metadata_changes: number;
+  ecosystem_changes: number;
+  relationships_added: number;
+  relationships_removed: number;
+  components_before: number;
+  components_after: number;
+  document_changes: number;
+  identical: boolean;
+}
+
+export interface SbomDiff {
+  id?: string;
+  base_sbom_id?: string;
+  target_sbom_id?: string;
+  base_version?: number;
+  target_version?: number;
+  base_commit_sha?: string;
+  target_commit_sha?: string;
+  summary: SbomDiffSummary;
+  items: SbomDiffItem[];
+  items_truncated?: boolean;
+  ecosystem_changes?: { name: string; old_ecosystem: string; new_ecosystem: string; basis: string; reason: string }[];
+  document_changes: { field: string; old: unknown; new: unknown }[];
+  relationships_added: { from: string; to: string }[];
+  relationships_removed: { from: string; to: string }[];
+}
+
+export interface SbomVerification {
+  sbom_id: string;
+  valid: boolean;
+  verified_at: string;
+  checks: { name: string; ok: boolean; detail: string; expected?: string; actual?: string; differing?: string[] }[];
+  digest_algorithm: string;
+  canonicalization: string;
+  difference_from_regenerated: Pick<SbomDiff, "summary" | "items" | "relationships_added" | "relationships_removed" | "document_changes"> | null;
+  meaning: string;
+}
+
+export interface SbomComponent {
+  bom_ref: string;
+  ecosystem: string | null;
+  name: string;
+  normalized_name: string | null;
+  version: string | null;
+  purl: string | null;
+  scope: string | null;
+  relationship: string | null;
+  hashes: { alg: string; content: string }[];
+  depends_on: string[];
+  component_digest: string;
+  vulnerabilities: { match_id: string; source_id: string; severity: Severity; fixed_version: string | null }[];
+}
+
+export interface SbomComponentList {
+  sbom_id: string;
+  total: number;
+  skip: number;
+  limit: number;
+  items: SbomComponent[];
+  vulnerability_linkage: SbomLinkage;
+}

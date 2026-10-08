@@ -2,7 +2,7 @@
 
 Database: `trustchain_x` (configurable through `MONGODB_DB`).
 
-All 29 collections are declared, with their indexes, in
+All 31 collections are declared, with their indexes, in
 `backend/app/models/collections.py`; `ensure_indexes()` creates the indexes at
 start-up and is safe to run repeatedly. **Declared does not mean populated.**
 The "Written from" column says which phase starts writing a collection.
@@ -141,7 +141,7 @@ One document per package version (or per unresolved package) in a snapshot.
 | `integrity` | array | `{algorithm, value}` from lockfiles |
 | `source` | object \| null | registry, git, path or URL source when recorded |
 | `depth`, `shortest_path_count`, `parents` | | from the graph |
-| `evidence`, `evidence_count` | array, int | up to 20 occurrences: `{source_file, line, raw, kind, package_manager, scope, evidence_type, git_blob_sha, …}` |
+| `evidence`, `evidence_count` | array, int | up to 20 occurrences: `{source_file, line, declaration, file_kind, package_manager, scope, evidence_type, git_blob_sha, …}` |
 
 Indexes: `{snapshot_id: 1, node_id: 1}` unique;
 `{project_id: 1, snapshot_id: 1, ecosystem: 1, normalized_name: 1}`.
@@ -174,16 +174,119 @@ databases created by Phase 1 are migrated at start-up:
 | Collection | Phase 1 | Phase 2 | Why |
 |---|---|---|---|
 
+### `vulnerabilities` (Phase 3)
+
+Shared reference data: one normalised advisory per `(source, source_id)`.
+
+| Field | Notes |
+|---|---|
+| `source`, `source_id`, `source_url` | provider name (`osv`) and the id it publishes (`GHSA-…`, `PYSEC-…`, `CVE-…`) |
+| `aliases`, `related` | other ids for the same vulnerability |
+| `summary`, `details`, `cwe_ids`, `references` | as published; `null` or empty when absent |
+| `severity`, `severity_source` | published label, or the rating of a computed CVSS v3 base score, or `UNKNOWN` |
+| `cvss` | `[{type, vector, version, base_score, score_origin}]`; `base_score` is `null` unless computed from a v3 vector |
+| `affected` | per package: `ecosystem`, `package_name`, `source_ecosystem`, `source_package_name`, `versions`, `ranges[{type, events}]`, `fixed_versions`, `source_range_note` |
+| `published_at`, `modified_at`, `withdrawn_at`, `source_modified` | source timestamps |
+| `raw`, `raw_stored`, `raw_sha256` | the record as received (omitted above a size limit) and its SHA-256 |
+| `ingested_at`, `first_seen_at`, `last_seen_at`, `normalizer_version` | |
+
+Indexes: `{source: 1, source_id: 1}` unique; `{aliases: 1}`;
+`{affected.ecosystem: 1, affected.package_name: 1}`; `{modified_at: -1}`.
+
+### `vulnerability_matches` (Phase 3)
+
+One document per `(snapshot, dependency, advisory)`.
+
+| Field | Notes |
+|---|---|
+| `project_id`, `repository_id`, `snapshot_id`, `job_id` | |
+| `dependency_id`, `dependency_node_id`, `vulnerability_id` | references |
+| `source`, `source_id`, `aliases`, `group_key`, `summary` | copied for listing; `group_key` groups aliases of one vulnerability |
+| `ecosystem`, `package_name`, `normalized_name`, `matched_version`, `relationship`, `depth` | the observed dependency |
+| `match_status` | `AFFECTED` \| `UNSUPPORTED` \| `CONFLICT` |
+| `confidence`, `confidence_meaning` | `HIGH` \| `UNDETERMINED` \| `LOW`; describes the version comparison only |
+| `classification` | `OBSERVED` or `null` |
+| `severity`, `severity_source`, `severity_rank`, `cvss` | from the advisory |
+| `affected_range`, `fixed_version`, `fixed_versions` | from the range that decided the match |
+| `evidence` | `{evidence_type, source{…}, observed{…, declared_in[]}, match{comparator, range_type, events, introduced, fixed, last_affected, limit, provider_reported, explanation}}` |
+| `matched_at`, `first_matched_at`, `matcher_version` | |
+
+Indexes: `{snapshot_id: 1, dependency_node_id: 1, vulnerability_id: 1}`
+unique; `{project_id: 1, snapshot_id: 1, match_status: 1, severity_rank: -1}`;
+`{vulnerability_id: 1}`.
+
+### `vulnerability_syncs` (Phase 3)
+
+One document per synchronisation run: `provider`, `project_id`, `snapshot_id`,
+`job_id`, `status` (`running` \| `completed` \| `partial` \| `failed`),
+`started_at`, `completed_at`, `dependencies_total`, `packages_queried`,
+`packages_unsupported`, `packages_unresolved`, `provider_requests`,
+`records_seen` / `_inserted` / `_updated` / `_unchanged` / `_failed`,
+`errors[]` (first 50), `error_summary`, and `reported` (which advisory ids the
+provider reported for which package version).
+
+Indexes: `{project_id: 1, started_at: -1}`; `{provider: 1, started_at: -1}`.
+
+### `vulnerability_sources` (Phase 3)
+
+One document per provider: `name`, `display_name`, `base_url`, `ecosystems`,
+`normalizer_version`, `last_sync_at`, `last_sync_status`, `last_sync_id`,
+`last_health`. Index: `{name: 1}` unique.
+
+### `sboms` (Phase 3)
+
+One document per generated SBOM version. Earlier versions are never modified,
+apart from `last_verification`.
+
+| Field | Notes |
+|---|---|
+| `project_id`, `repository_id`, `snapshot_id`, `commit_sha`, `branch`, `job_id` | |
+| `version`, `previous_sbom_id` | 1, 2, … per project |
+| `format`, `spec_version`, `media_type`, `serial_number`, `generator`, `generated_at`, `source` | `CycloneDX`, `1.5` |
+| `component_count`, `relationship_count`, `unresolved_components`, `components_with_hashes`, `completeness` | |
+| `digest_algorithm`, `canonicalization`, `content_digest`, `document_digest`, `document_size` | SHA-256 over canonical JSON |
+| `document_zlib` | the canonical document, zlib-compressed; never returned in metadata responses |
+| `last_verification` | `{valid, verified_at, failed_checks}` or `null` |
+
+Indexes: `{project_id: 1, snapshot_id: 1, content_digest: 1}` unique;
+`{project_id: 1, version: -1}`.
+
+### `sbom_components` (Phase 3)
+
+One row per component of an SBOM, for listing and for linking to
+vulnerability matches: `sbom_id`, `project_id`, `snapshot_id`, `bom_ref`
+(equal to the dependency `node_id`), `type`, `ecosystem`, `name`,
+`normalized_name`, `version`, `purl`, `scope`, `relationship`, `hashes`,
+`depends_on`, `component_digest`.
+
+Indexes: `{sbom_id: 1, bom_ref: 1}` unique; `{project_id: 1, purl: 1}`.
+
+### `sbom_differences` (Phase 3)
+
+A stored comparison of two SBOMs of a project: `project_id`, `base_sbom_id`,
+`target_sbom_id`, their versions and snapshots, `summary` (added, removed,
+changed, unchanged), `items[]` (`change`, `bom_ref`, before/after fields),
+`ecosystem_changes`, `document_changes`, relationship changes, `created_at`.
+
+Index: `{project_id: 1, base_sbom_id: 1, target_sbom_id: 1}` unique.
+
+### Other changes in Phase 3
+
+- `projects` gains `latest_vulnerability_scan` (summary of the last matching
+  run) and `latest_sbom_id`.
+- `analysis_jobs` gains the job types `vulnerability_sync`,
+  `vulnerability_analysis` and `sbom_generation`; the document shape is
+  unchanged.
+- Indexes of `sboms`, `sbom_components`, `sbom_differences`, `vulnerabilities`
+  and `vulnerability_matches` differ from the ones declared (never used) in
+  Phases 1–2. `ensure_indexes()` drops the obsolete ones at start-up. No
+  existing document is changed or removed.
+
 ## Collections declared for later phases
 
 | Collection | Purpose | Key fields (planned) | Indexes | Written from |
 |---|---|---|---|---|
-| `sboms` | Original and verified SBOM documents (kept separately; originals are never overwritten) | `project_id`, `snapshot_id`, `kind` (`ORIGINAL` \| `VERIFIED`), `format` (`CycloneDX` \| `SPDX`), `content_hash`, `integrity_score` | `{project_id, snapshot_id, kind}`; `{content_hash}` | Phase 4 |
-| `sbom_components` | Components of an SBOM | `sbom_id`, `purl`, `name`, `version` | `{sbom_id, purl}` | Phase 4 |
-| `sbom_differences` | Missing / extra / mismatched components and repair actions | `project_id`, `snapshot_id`, `difference_type`, `purl`, `repair_action` | `{project_id, snapshot_id, difference_type}` | Phase 4 |
-| `vulnerabilities` | Normalised advisory records | `source`, `source_id`, `aliases` (CVE…), `cwe`, `cvss`, `affected[]`, `fixed_versions`, `references`, `published_at`, `modified_at`, `fetched_at` | `{source, source_id}` unique; `{aliases}`; `{affected.ecosystem, affected.package_name}` | Phase 3 |
-| `vulnerability_matches` | A vulnerability affecting a dependency of a snapshot | `project_id`, `snapshot_id`, `dependency_id`, `vulnerability_id`, `severity`, evidence | `{snapshot_id, dependency_id, vulnerability_id}` unique; `{project_id, severity}` | Phase 3 |
-| `code_reachability` | `REACHABLE` / `NOT_REACHABLE` / `UNKNOWN` per match | `snapshot_id`, `match_id`, `classification`, evidence | `{snapshot_id, match_id}` unique | Phase 3 |
+| `code_reachability` | `REACHABLE` / `NOT_REACHABLE` / `UNKNOWN` per match | `snapshot_id`, `match_id`, `classification`, evidence | `{snapshot_id, match_id}` unique | Phase 7 |
 | `attack_paths` | Simulated paths (graph-based, defensive) | `project_id`, `snapshot_id`, `nodes`, `path_risk`, `impact` | `{project_id, snapshot_id, path_risk:-1}` | Phase 7 |
 | `maintainers` | Public contributor identity | `platform`, `login` | `{platform, login}` unique | Phase 8 |
 | `maintainer_profiles` | Behaviour baseline per repo and maintainer | `repository_id`, `maintainer_id`, baseline statistics | `{repository_id, maintainer_id}` unique | Phase 8 |
@@ -207,5 +310,7 @@ databases created by Phase 1 are migrated at start-up:
   metadata would become visible to any user who registers them — use a token
   limited to public data.
 - Deleting a project removes the project and its analysis data (jobs,
-  snapshots, dependencies, graphs). The shared `repositories` and
-  `dependency_versions` documents and the audit trail are kept.
+  snapshots, dependencies, graphs, vulnerability matches and synchronisation
+  records, SBOMs with their components and diffs). The shared `repositories`,
+  `dependency_versions` and `vulnerabilities` documents and the audit trail
+  are kept.

@@ -12,6 +12,8 @@ Base path `/api`. JSON in, JSON out. Interactive documentation is served at
   from one that does not exist (404).
 - **Limits:** request bodies above 1 MiB → 413. Register and login share a
   per-client rate limit (default 10 per minute) → 429 with `Retry-After`.
+  Starting a Phase 3 job or a provider health check is limited per client
+  (default 30 per minute) → 429 with `Retry-After`.
 
 ## Implemented (Phase 1)
 
@@ -103,6 +105,57 @@ The project object gains `latest_snapshot_id`; `languages` and
 `last_analysis` are filled in by a completed analysis. Deleting a project
 deletes its jobs, snapshots, dependencies and graphs.
 
+## Implemented (Phase 3) — vulnerabilities, SBOM, jobs
+
+All project routes require the project's owner; any other caller gets 404.
+No request accepts a URL: the provider endpoint is configuration only.
+
+### Vulnerabilities
+
+| Method | Path | Result |
+|---|---|---|
+| POST | `/api/projects/{id}/vulnerabilities/sync` | 202 `{job}`. Queues `vulnerability_sync`: query the provider, store advisories, match. Optional body `{"provider": "osv"}`. 409 without a dependency inventory, when another job is active for the project, or when no provider is enabled; 422 for an unknown provider |
+| POST | `/api/projects/{id}/vulnerabilities/analyze` | 202 `{job}`. Queues `vulnerability_analysis`: re-match using advisories already stored, without contacting the provider. Same 409 rules |
+| GET | `/api/projects/{id}/vulnerabilities` | `?skip&limit(≤500)&severity=CRITICAL\|HIGH\|MEDIUM\|LOW\|UNKNOWN&match_status=AFFECTED\|UNSUPPORTED\|CONFLICT&ecosystem&q` → `{job, providers, snapshot, scan, sync, total, skip, limit, items}`. `scan` is the summary of the last matching run for the latest snapshot (`null` if none): dependencies checked / unresolved / unsupported, matches by status and by severity, and the synchronisation it relied on. `sync` is the last synchronisation with its status (`completed`, `partial`, `failed`) and counts. Items are sorted by severity, then package |
+| GET | `/api/projects/{id}/vulnerabilities/{match_id}` | `{match, vulnerability}` — the match with its full evidence and the normalised advisory. `?include_raw=true` adds the record as received from the source |
+| GET | `/api/vulnerability-providers` | `{items}` — enabled providers: name, base URL, supported ecosystems, last synchronisation and last health check. Any signed-in user |
+| POST | `/api/vulnerability-providers/{name}/health-check` | `{provider, ok, detail, code, checked_at}`. Contacts the configured provider once. 404 for an unknown provider |
+
+A match item: `id`, `package_name`, `ecosystem`, `matched_version`,
+`relationship`, `depth`, `source`, `source_id`, `aliases`, `group_key`,
+`summary`, `severity`, `severity_source`, `cvss[]`, `affected_range`,
+`fixed_version`, `fixed_versions`, `match_status`, `confidence`,
+`confidence_meaning`, `classification`, `matched_at`. The detail adds
+`evidence: {evidence_type, source, observed, match}`.
+
+No response contains an exploitability, risk or trust figure.
+
+### SBOM
+
+| Method | Path | Result |
+|---|---|---|
+| POST | `/api/projects/{id}/sbom/generate` | 202 `{job}`. Queues `sbom_generation` from the latest snapshot. 409 without an inventory or when another job is active |
+| GET | `/api/projects/{id}/sbom` | `{job, latest, history, has_inventory, latest_snapshot_id}`. `history` is every SBOM version, newest first. `latest` includes the vulnerability linkage summary |
+| GET | `/api/projects/{id}/sbom/{sbom_id}` | SBOM metadata: version, format, spec version, serial number, snapshot and commit, counts, `content_digest`, `document_digest`, `completeness`, `last_verification`, vulnerability linkage |
+| GET | `/api/projects/{id}/sbom/{sbom_id}/document` | The CycloneDX JSON document (`application/vnd.cyclonedx+json`, as an attachment, with the document digest in the `X-Content-Digest` header). 409 if the stored document cannot be read |
+| GET | `/api/projects/{id}/sbom/{sbom_id}/components` | `?skip&limit(≤500)&q&only_vulnerable` → `{total, items}`; each component carries the vulnerability matches currently stored for it |
+| POST | `/api/projects/{id}/sbom/{sbom_id}/verify` | `{sbom_id, valid, verified_at, checks[], …}` — each check has `name`, `ok`, `detail` and, where relevant, `expected` / `actual`. The result is also saved as the SBOM's `last_verification` |
+| GET | `/api/projects/{id}/sbom/{sbom_id}/diff/{other_id}` | Differences from `other_id` (base) to `sbom_id` (target): `summary`, `items[]` with `change` = `ADDED` \| `REMOVED` \| `CHANGED`, `ecosystem_changes`, `document_changes`, relationship changes. 409 if either document cannot be read |
+
+### Jobs
+
+| Method | Path | Result |
+|---|---|---|
+| GET | `/api/projects/{id}/jobs` | `?type=<comma-separated job types>&limit(≤50)` → `{active, items}`. `active` is the job currently queued or running for the project, of any type, or `null`. Job types: `dependencies`, `vulnerability_sync`, `vulnerability_analysis`, `sbom_generation` |
+
+Job documents have the Phase 2 shape (`state`, `stage`, `stage_index`,
+`stage_count`, `stages`, `message`, `error: {code, message, retry_at}`,
+`summary`). Error codes are listed in [phase3.md](phase3.md).
+
+Deleting a project also deletes its vulnerability matches, synchronisation
+records, SBOMs, SBOM components and SBOM diffs. Stored advisories are shared
+reference data and are kept.
+
 ## Planned
 
 These endpoints are part of the target API and are **not implemented**;
@@ -111,10 +164,7 @@ and `/dependency-graph` paths were replaced by the Phase 2 routes above.
 
 | Method | Path | Phase |
 |---|---|---|
-| GET | `/api/projects/{id}/vulnerabilities` | 3 |
-| GET | `/api/projects/{id}/reachability` | 3 |
-| GET | `/api/projects/{id}/sbom` | 4 |
-| POST | `/api/projects/{id}/sbom/verify` | 4 |
+| GET | `/api/projects/{id}/reachability` | 7 |
 | POST | `/api/projects/{id}/sbom/repair` | 4 |
 | GET | `/api/projects/{id}/fragility` | 5 |
 | GET | `/api/projects/{id}/predictions` | 5–6 |

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import time
 from pathlib import Path
 
@@ -181,6 +182,78 @@ class GitHubStub:
         return httpx.Response(self.status, json=self.payload, headers=self.headers)
 
 
+class OsvStub:
+    """A programmable OSV API (POST /v1/querybatch, GET /v1/vulns/{id}). Records every request.
+
+    `records` holds advisory records by id. `reports` says which ids OSV
+    reports for a package version; tests state that explicitly, exactly as
+    they would observe it from the real service.
+    """
+
+    def __init__(self) -> None:
+        self.requests: list[httpx.Request] = []
+        self.records: dict[str, dict] = {}
+        self.reports: dict[tuple[str, str, str], list[str]] = {}
+        self.fail: dict[str, list[tuple[int, dict[str, str]]]] = {}   # path fragment -> queued (status, headers) failures
+        self.always_fail: dict[str, tuple[int, dict[str, str]]] = {}
+        self.error: Exception | None = None
+        self.raw_bodies: dict[str, bytes] = {}                        # id -> body served instead of the record
+        self.page_size: int | None = None                              # ids per query page (None: all at once)
+        self.modified_override: dict[str, str] = {}
+
+    def add(self, *records: dict) -> None:
+        for record in records:
+            self.records[record["id"]] = record
+
+    def report(self, ecosystem: str, name: str, version: str, *ids: str) -> None:
+        self.reports[(ecosystem, name, version)] = list(ids)
+
+    def load(self, *names: str) -> list[dict]:
+        """Add real advisory records from tests/fixtures/osv by id."""
+        loaded = [json.loads((FIXTURES / "osv" / f"{name}.json").read_text()) for name in names]
+        self.add(*loaded)
+        return loaded
+
+    def calls(self, fragment: str) -> list[httpx.Request]:
+        return [r for r in self.requests if fragment in r.url.path]
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        path = request.url.path
+        for fragment, (status, headers) in self.always_fail.items():
+            if fragment in path:
+                return httpx.Response(status, json={"message": "simulated"}, headers=headers)
+        for fragment, queue in self.fail.items():
+            if fragment in path and queue:
+                status, headers = queue.pop(0)
+                return httpx.Response(status, json={"message": "simulated"}, headers=headers)
+        if request.method == "POST" and path.endswith("/v1/querybatch"):
+            results = []
+            for query in json.loads(request.content)["queries"]:
+                package = query["package"]
+                ids = self.reports.get((package["ecosystem"], package["name"], query["version"]), [])
+                start = int(query.get("page_token") or 0)
+                page = ids[start:start + self.page_size] if self.page_size else ids
+                answer: dict = {}
+                if page:
+                    answer["vulns"] = [{"id": i, "modified": self.modified_override.get(i, self.records.get(i, {}).get("modified", ""))}
+                                       for i in page]
+                if self.page_size and start + self.page_size < len(ids):
+                    answer["next_page_token"] = str(start + self.page_size)
+                results.append(answer)
+            return httpx.Response(200, json={"results": results})
+        if request.method == "GET" and "/v1/vulns/" in path:
+            identifier = path.rsplit("/", 1)[1]
+            if identifier in self.raw_bodies:
+                return httpx.Response(200, content=self.raw_bodies[identifier], headers={"content-type": "application/json"})
+            if identifier in self.records:
+                return httpx.Response(200, json=self.records[identifier])
+            return httpx.Response(404, json={"code": 5, "message": "Bug not found."})
+        return httpx.Response(404, json={"message": "not found"})
+
+
 @pytest.fixture
 def settings():
     return load_settings(TEST_ENV)
@@ -207,14 +280,22 @@ def github():
 
 
 @pytest.fixture
-def app(settings, mongo, fake_redis, github):
+def osv():
+    return OsvStub()
+
+
+@pytest.fixture
+def app(settings, mongo, fake_redis, github, osv):
     application = create_app(
         settings,
         mongo_client=mongo,
         redis_client=fake_redis,
         github_transport=httpx.MockTransport(github.handler),
+        provider_transport=httpx.MockTransport(osv.handler),
     )
     application.state.github.sleep = lambda _seconds: None  # no real back-off waits in tests
+    for provider in application.state.providers.values():
+        provider.sleep = lambda _seconds: None
     return application
 
 
@@ -259,4 +340,4 @@ def run_worker(app) -> int:
     """Run the worker's job loop once against the application's own database and GitHub client."""
     from app.workers.worker import process_available_jobs
 
-    return process_available_jobs(app.state.settings, app.state.db, app.state.github)
+    return process_available_jobs(app.state.settings, app.state.db, app.state.github, providers=app.state.providers)

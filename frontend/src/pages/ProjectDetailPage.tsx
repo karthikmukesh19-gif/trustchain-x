@@ -17,8 +17,8 @@ import { formatCount, formatDate, formatDateTime, formatSize } from "../utils/fo
 
 /** Evidence layers that later phases will add to this page. None of them exist yet. */
 const PLANNED_ANALYSIS = [
-  { name: "Vulnerabilities and code reachability", phase: 3 },
-  { name: "SBOM verification and reconstruction", phase: 4 },
+  { name: "Code reachability analysis", phase: 4 },
+  { name: "Self-healing SBOM (verification of external SBOMs and repair)", phase: 4 },
   { name: "Dependency fragility and predicted risk", phase: 5 },
   { name: "Attack-path simulation", phase: 7 },
   { name: "Maintainer and commit behaviour", phase: 8 },
@@ -233,8 +233,9 @@ export function ProjectDetailPage() {
       <section className="card mt-6 p-5">
         <h2 className="text-base font-semibold">Not yet available</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted">
-          Dependency analysis is the first evidence layer. No vulnerability, risk or trust figures exist for this project:
-          the parts of the platform that would produce them have not been built.
+          Dependency analysis, vulnerability matching and SBOMs are available from the tabs above. Whether vulnerable code
+          is actually reachable, how likely exploitation is, and any risk or trust figure are not assessed: the parts of
+          the platform that would produce them have not been built.
         </p>
         <ol className="mt-4 divide-y divide-line border-t border-line">
           {PLANNED_ANALYSIS.map((item) => (

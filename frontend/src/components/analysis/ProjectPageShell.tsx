@@ -33,7 +33,7 @@ export function ProjectPageShell({ projectId, actions, children }: { projectId: 
         {actions}
       </PageHeader>
       <ProjectTabs projectId={projectId} />
-      {children}
+      <div data-testid="project-content">{children}</div>
     </>
   );
 }

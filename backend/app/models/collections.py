@@ -1,6 +1,6 @@
 """Collection names and index definitions.
 
-All 29 collections of the data model are declared here so the schema is
+All collections of the data model are declared here so the schema is
 visible in one place and indexes exist before any phase writes data. A
 collection listed here is not necessarily written to yet — docs/database.md
 records which phase populates each one.
@@ -38,6 +38,8 @@ SBOM_COMPONENTS = "sbom_components"
 SBOM_DIFFERENCES = "sbom_differences"
 VULNERABILITIES = "vulnerabilities"
 VULNERABILITY_MATCHES = "vulnerability_matches"
+VULNERABILITY_SYNCS = "vulnerability_syncs"
+VULNERABILITY_SOURCES = "vulnerability_sources"
 CODE_REACHABILITY = "code_reachability"
 ATTACK_PATHS = "attack_paths"
 MAINTAINERS = "maintainers"
@@ -74,18 +76,25 @@ INDEXES: dict[str, list[Index]] = {
     ],
     DEPENDENCY_VERSIONS: [idx(("ecosystem", A), ("package_name", A), ("version", A), unique=True)],
     DEPENDENCY_GRAPHS: [idx(("snapshot_id", A), unique=True), idx(("project_id", A), ("created_at", D))],
-    SBOMS: [idx(("project_id", A), ("snapshot_id", A), ("kind", A)), idx(("content_hash", A))],
-    SBOM_COMPONENTS: [idx(("sbom_id", A), ("purl", A))],
-    SBOM_DIFFERENCES: [idx(("project_id", A), ("snapshot_id", A), ("difference_type", A))],
+    SBOMS: [
+        idx(("project_id", A), ("snapshot_id", A), ("content_digest", A), unique=True),
+        idx(("project_id", A), ("version", D)),
+    ],
+    SBOM_COMPONENTS: [idx(("sbom_id", A), ("bom_ref", A), unique=True), idx(("project_id", A), ("purl", A))],
+    SBOM_DIFFERENCES: [idx(("project_id", A), ("base_sbom_id", A), ("target_sbom_id", A), unique=True)],
     VULNERABILITIES: [
         idx(("source", A), ("source_id", A), unique=True),
         idx(("aliases", A)),
         idx(("affected.ecosystem", A), ("affected.package_name", A)),
+        idx(("modified_at", D)),
     ],
     VULNERABILITY_MATCHES: [
-        idx(("snapshot_id", A), ("dependency_id", A), ("vulnerability_id", A), unique=True),
-        idx(("project_id", A), ("severity", A)),
+        idx(("snapshot_id", A), ("dependency_node_id", A), ("vulnerability_id", A), unique=True),
+        idx(("project_id", A), ("snapshot_id", A), ("match_status", A), ("severity_rank", D)),
+        idx(("vulnerability_id", A)),
     ],
+    VULNERABILITY_SYNCS: [idx(("project_id", A), ("started_at", D)), idx(("provider", A), ("started_at", D))],
+    VULNERABILITY_SOURCES: [idx(("name", A), unique=True)],
     CODE_REACHABILITY: [idx(("snapshot_id", A), ("match_id", A), unique=True)],
     ATTACK_PATHS: [idx(("project_id", A), ("snapshot_id", A), ("path_risk", D))],
     MAINTAINERS: [idx(("platform", A), ("login", A), unique=True)],

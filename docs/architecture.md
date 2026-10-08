@@ -44,16 +44,16 @@ The stack is not negotiable. Secrets come from environment variables only.
                          │
         ┌────────────────┼────────────────┐
         ▼                ▼                ▼
- Repository        Dependency         SBOM Engine         BUILT, BUILT,
- Collector         Analyzer           & Verifier          PLANNED (Phase 4)
+ Repository        Dependency         SBOM Engine         BUILT, BUILT, BUILT (generate,
+ Collector         Analyzer           & Verifier          verify, diff; repair: Phase 4)
         └────────────────┼────────────────┘
                          ▼
                 Dependency Graph                          BUILT (prediction: Phase 6)
                          │
         ┌────────────────┼──────────────────┐
         ▼                ▼                  ▼
- Vulnerability      Reachability      Attack Path         PLANNED
- Analysis           Analysis          Simulation          (Phases 3, 7)
+ Vulnerability      Reachability      Attack Path         BUILT (known-advisory matching),
+ Analysis           Analysis          Simulation          PLANNED, PLANNED (Phase 7)
         └────────────────┼──────────────────┘
                          ▼
               Behaviour Intelligence                      PLANNED (Phases 8, 9)
@@ -94,13 +94,17 @@ backend/app/
 ├── security/        password hashing, rate limiting, URL validation, security headers
 ├── schemas/         Pydantic request/response models
 ├── models/          MongoDB connection, collection names, index definitions
-├── services/        business logic (users, projects, audit log, dashboard)
-├── collectors/      clients for external sources (GitHub metadata, commits, trees, blobs)
+├── services/        business logic (users, projects, audit log, dashboard, analysis, jobs,
+│                    vulnerabilities, sbom)
+├── collectors/      clients for external sources (GitHub metadata, commits, trees, blobs);
+│                    providers/ — vulnerability sources behind one interface (OSV)
 ├── workers/         background worker process
 ├── analyzers/       language / package-manager detection, dependency parsers,
-│                    normalisation, resolution (vulnerability, reachability, fragility: PLANNED)
+│                    normalisation, resolution; vulnerabilities/ — version ordering, CVSS,
+│                    affected-range matching (reachability, fragility: PLANNED)
 ├── graph/           dependency graph construction and path queries (propagation, attack paths: PLANNED)
-├── sbom/            PLANNED — SBOM parse / verify / reconstruct
+├── sbom/            CycloneDX generation, canonical form and digests, diff
+│                    (parsing found SBOMs, reconstruction: PLANNED, Phase 4)
 ├── ml/              PLANNED — models, features, evaluation
 └── websocket/       PLANNED — live progress and security events
 ```
@@ -170,6 +174,24 @@ queued → running [REPOSITORY_SNAPSHOT → REPOSITORY_DISCOVERY → DEPENDENCY_
 
 Details are in [dependency-analysis.md](dependency-analysis.md).
 
+**Built (Phase 3)** — three further job types on the same job system
+(`services/jobs.py`), one job per project at a time:
+
+```text
+vulnerability_sync      PROVIDER_QUERY → RECORD_INGESTION → MATCHING
+vulnerability_analysis  MATCHING                      (stored advisories only)
+sbom_generation         SBOM_GENERATION → SBOM_COMPARISON
+```
+
+The worker builds the vulnerability providers from configuration and passes
+them to the job handlers; nothing in a request or a repository can change
+where they connect. SBOM verification and on-demand diffs run inside the
+request. Details are in [phase3.md](phase3.md).
+
+Phase 3 reports published advisories whose affected versions contain an
+observed dependency version. It does not predict exploitability, analyse
+reachability, simulate attack paths or compute any risk or trust score.
+
 **Target (later phases)** — the full pipeline extends the same job system
 with these stages, and pushes transitions over `/ws/projects/{project_id}`
 from Phase 9:
@@ -206,6 +228,9 @@ repository code on the host.
 | Containers run as non-root, no privileged mode, dropped capabilities, read-only root filesystem for the API | `Dockerfile`, `docker-compose.yml` | BUILT |
 | Repository acquisition without cloning or executing anything: GitHub API only, git-blob integrity check, size / count / time limits, rate-limit handling | `collectors/github.py`, `services/analysis.py` | BUILT |
 | Path validation for repository-provided paths; no shell commands built from repository content; safe XML / YAML parsing | `collectors/github.py`, `analyzers/` | BUILT |
+| Vulnerability provider access — endpoint from configuration only, `https`, host allow-list, no redirects, response size caps, validated ids, bounded retries | `config/settings.py`, `collectors/providers/osv.py` | BUILT |
+| Rate limit on job starts and provider health checks | `security/rate_limit.py` | BUILT (in-process) |
+| SBOM integrity — canonical form, SHA-256 digests, regeneration check. Integrity-verifiable, not signed | `sbom/canonical.py`, `services/sbom.py` | BUILT |
 | Sandboxed execution of repository code | — | Not needed so far: no phase executes repository code. Required before any that does |
 | WebSocket authentication | `websocket/` | PLANNED (Phase 9) |
 
@@ -255,7 +280,7 @@ training process, baseline, metrics and limitations (`docs/ml.md`, Phase 5+).
 | R1 | GitHub API rate limits (60 req/h unauthenticated) | Collection stalls | Optional `GITHUB_TOKEN`; conditional requests; cache per snapshot; back-off |
 | R2 | Cloning hostile or huge repositories | Resource exhaustion, code execution | Shallow clone in a sandbox container, size and time limits, never execute repo code |
 | R3 | Resolving transitive dependencies without running package managers | Incomplete graphs | Prefer lockfiles; otherwise resolve via registry metadata APIs and mark the result `resolution: estimated` |
-| R4 | Vulnerability sources disagree | Wrong matches | Ingest more than one source (OSV, NVD, GitHub Advisories), keep source + timestamp per record, surface conflicts |
+| R4 | Vulnerability sources disagree | Wrong matches | One source (OSV) is built, behind a provider interface; source, timestamp and raw record are kept per advisory, and a disagreement between the provider's report and the local range evaluation is stored as `CONFLICT`. Further sources: planned |
 | R5 | Static reachability is undecidable in general | False confidence | Three-way result (`REACHABLE` / `NOT_REACHABLE` / `UNKNOWN`), per-language precision documented |
 | R6 | No labelled ground truth for "risky dependency" or "anomalous maintainer" | Unevaluable models | Start with transparent scoring; build labelled sets from historical advisories and known incidents; report baselines and limits |
 | R7 | LLM hallucination | Invented evidence | Evidence-id grounding validator; measure hallucination rate |

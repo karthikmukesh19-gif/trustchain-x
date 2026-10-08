@@ -10,10 +10,11 @@ Controls that exist in the code today. Planned controls are listed in
 | Passwords | scrypt (N=2¹⁵, r=8, p=1), random per-user salt, constant-time comparison; 10–128 characters with a letter and a digit |
 | Sessions | JWT access tokens (HS256, 60 minutes by default). Production refuses to start without a secret of at least 32 characters |
 | Login | Identical response and work for unknown accounts and wrong passwords; rate limited per client address |
-| Authorisation | Every project, snapshot, dependency, graph and job query is scoped to the owning user. Another user's project answers 404 |
+| Authorisation | Every project, snapshot, dependency, graph, job, vulnerability-match and SBOM query is scoped to the owning user. Another user's project answers 404. There is no unauthenticated endpoint that returns project security data |
 | Input | Strict Pydantic models, unknown fields rejected, 1 MiB body cap, validation errors never echo the submitted value |
 | Transport hardening | CORS allow-list, security headers, API docs disabled in production |
-| Audit log | Registration, sign-in, project changes, analysis requests and their outcomes |
+| Audit log | Registration, sign-in, project changes, analysis requests and their outcomes, vulnerability and SBOM job requests, SBOM verifications, provider health checks |
+| Job rate limit | Starting a vulnerability or SBOM job, and provider health checks, are limited per client address (default 30 per minute) |
 | Containers | Non-root users, `no-new-privileges`, all capabilities dropped and read-only root filesystem for the API and worker, databases not published to the host |
 
 ## Repository analysis
@@ -33,9 +34,24 @@ Every repository is untrusted input.
 | GitHub rate limits | Detected from status and headers; the job fails with `RATE_LIMITED` and the reset time rather than waiting or retrying in a loop |
 | Token exposure | `GITHUB_TOKEN` is sent only to the configured API host, never logged, and absent from settings output |
 
+## Vulnerability intelligence and SBOM (Phase 3)
+
+| Threat | Control |
+|---|---|
+| SSRF through the provider | The provider base URL is read from configuration at start-up and validated: `https` only, default port, no credentials, query or fragment, host in `VULNERABILITY_ALLOWED_HOSTS`. An invalid value stops the application from starting. No API request, repository file or advisory record can supply a URL that is fetched. Redirects are not followed. Reference URLs inside advisories are stored and displayed as text links, never fetched by the server |
+| Injection into provider requests | Package names and versions are sent as JSON values. Advisory ids are checked against a strict pattern before being placed in a URL path |
+| Hostile or oversized provider responses | Size caps per response and per record, a cap on advisories per sync, a cap on result pages, request and whole-sync timeouts, bounded retries. Records are treated as data: fields are type-checked, length-limited and stripped of control characters; a malformed record is counted as a failure |
+| Provider outage or rate limiting | Detected and reported with a specific code. A sync that did not store every reported advisory is never recorded as completed |
+| Misleading results | Severity and CVSS are shown as published; nothing is invented. A match states that it concerns version numbers only. Undecidable comparisons are `UNSUPPORTED`, never affected. An empty result is worded as "no published advisory matched", not as safe |
+| SBOM tampering | Detected by digest and regeneration checks (see phase3.md). The SBOM is integrity-verifiable, not signed: digests live in the same database as the document |
+| Hostile content in SBOM output | Component data comes from the validated Phase 2 inventory. The download is served as an attachment with `nosniff` |
+| Secrets | No provider credential exists for OSV. Raw advisory records are stored; request headers and tokens are never logged |
+
 ## Known gaps
 
 - Rate-limit counters are per backend process (Redis-backed counters: Phase 14).
+- SBOMs are not cryptographically signed.
+- One vulnerability source; no scheduled refresh of advisory data.
 - No token revocation list; tokens are short-lived.
 - The browser stores the token in `sessionStorage`; a strict CSP limits the XSS exposure.
 - Repository metadata and analysis use one platform-wide `GITHUB_TOKEN`. Use

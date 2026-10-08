@@ -10,7 +10,9 @@ import { NotFoundPage } from "./pages/NotFoundPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { RegisterPage } from "./pages/RegisterPage";
+import { SbomPage } from "./pages/SbomPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { VulnerabilitiesPage } from "./pages/VulnerabilitiesPage";
 
 export default function App() {
   return (
@@ -27,6 +29,8 @@ export default function App() {
           <Route path="/projects/:id" element={<ProjectDetailPage />} />
           <Route path="/projects/:id/dependencies" element={<DependenciesPage />} />
           <Route path="/projects/:id/graph" element={<GraphPage />} />
+          <Route path="/projects/:id/vulnerabilities" element={<VulnerabilitiesPage />} />
+          <Route path="/projects/:id/sbom" element={<SbomPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Route>

@@ -71,3 +71,19 @@ def auth_rate_limit(request: Request) -> None:
             detail="Too many attempts. Try again later.",
             headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
         )
+
+
+def job_rate_limit(request: Request) -> None:
+    """FastAPI dependency: limit how often one client may start background jobs or provider checks.
+
+    These requests cause outbound calls to GitHub or a vulnerability provider,
+    so they are bounded to protect the platform's quota with those services.
+    """
+    limiter: RateLimiter = request.app.state.job_limiter
+    allowed, retry_after = limiter.check(client_address(request))
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many jobs requested. Try again later.",
+            headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
+        )

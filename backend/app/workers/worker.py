@@ -1,6 +1,6 @@
 """Background worker process.
 
-Runs dependency-analysis jobs. A heartbeat thread reports liveness
+Runs dependency-analysis, vulnerability and SBOM jobs. A heartbeat thread reports liveness
 independently of the job loop, so a long analysis does not make the worker
 look dead.
 
@@ -17,9 +17,10 @@ from typing import Any
 import redis
 
 from app.collectors.github import GitHubClient
+from app.collectors.providers import build_providers
 from app.config.settings import Settings, get_settings
 from app.models.database import create_client, ensure_indexes, ping
-from app.services import analysis
+from app.services import analysis, jobs
 from app.workers.heartbeat import beat
 
 logger = logging.getLogger("trustchain.worker")
@@ -38,16 +39,24 @@ def heartbeat_loop(settings: Settings, redis_client: Any, stop: threading.Event)
     return beats
 
 
-def process_available_jobs(settings: Settings, db: Any, github: GitHubClient, stop: threading.Event | None = None) -> int:
+def process_available_jobs(settings: Settings, db: Any, github: GitHubClient, stop: threading.Event | None = None,
+                           providers: dict[str, Any] | None = None) -> int:
     """Run queued jobs until none are left. Returns how many were run."""
     processed = 0
+    if providers is None:
+        providers = build_providers(settings)
     analysis.fail_stale_jobs(db, settings)
     while stop is None or not stop.is_set():
         job = analysis.claim_next_job(db)
-        if job is None:
-            break
-        logger.info("Running analysis job %s for project %s", job["_id"], job["project_id"])
-        finished = analysis.run_job(db, github, settings, job)
+        if job is not None:
+            logger.info("Running analysis job %s for project %s", job["_id"], job["project_id"])
+            finished = analysis.run_job(db, github, settings, job)
+        else:
+            job = jobs.claim_next_job(db)
+            if job is None:
+                break
+            logger.info("Running %s job %s for project %s", job["type"], job["_id"], job["project_id"])
+            finished = jobs.run_job(db, settings, providers, job)
         logger.info("Job %s finished: %s", job["_id"], finished["state"])
         processed += 1
     return processed
@@ -61,12 +70,15 @@ def wait_for_work(redis_client: Any, timeout: int, stop: threading.Event) -> Non
         stop.wait(timeout)
 
 
-def run(settings: Settings, redis_client: Any, db: Any, github: GitHubClient, stop: threading.Event) -> None:
+def run(settings: Settings, redis_client: Any, db: Any, github: GitHubClient, stop: threading.Event,
+        providers: dict[str, Any] | None = None) -> None:
     poll = max(1, min(settings.worker_heartbeat_seconds, 5))
+    if providers is None:
+        providers = build_providers(settings)
     while not stop.is_set():
         try:
             if ping(db):
-                process_available_jobs(settings, db, github, stop)
+                process_available_jobs(settings, db, github, stop, providers)
             else:
                 logger.warning("MongoDB is not reachable")
         except Exception:  # noqa: BLE001 - keep the worker alive; the job itself records failures

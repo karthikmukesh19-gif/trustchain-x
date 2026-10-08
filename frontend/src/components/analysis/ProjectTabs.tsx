@@ -6,6 +6,8 @@ export function ProjectTabs({ projectId }: { projectId: string }) {
     { to: `/projects/${projectId}`, label: "Overview", end: true },
     { to: `/projects/${projectId}/dependencies`, label: "Dependencies", end: false },
     { to: `/projects/${projectId}/graph`, label: "Dependency graph", end: false },
+    { to: `/projects/${projectId}/vulnerabilities`, label: "Vulnerabilities", end: false },
+    { to: `/projects/${projectId}/sbom`, label: "SBOM", end: false },
   ];
   return (
     <nav className="mb-6 flex gap-1 overflow-x-auto border-b border-line" aria-label="Project sections">

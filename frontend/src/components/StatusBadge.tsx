@@ -1,4 +1,4 @@
-import type { Basis, MetadataStatus, Relationship } from "../utils/types";
+import type { Basis, MatchStatus, MetadataStatus, Relationship, Severity } from "../utils/types";
 
 type Tone = "good" | "warn" | "bad" | "neutral";
 
@@ -54,4 +54,22 @@ const RELATIONSHIP_LABEL: Record<Relationship, string> = { DIRECT: "Direct", TRA
 
 export function RelationshipLabel({ relationship }: { relationship: Relationship }) {
   return <span className="font-medium">{RELATIONSHIP_LABEL[relationship] ?? relationship}</span>;
+}
+
+const SEVERITY_TONE = { CRITICAL: "bad", HIGH: "bad", MEDIUM: "warn", LOW: "neutral", UNKNOWN: "neutral" } as const;
+
+/** Severity as published by the source. UNKNOWN means the source gives none; nothing is estimated. */
+export function SeverityBadge({ severity }: { severity: Severity }) {
+  return <Badge tone={SEVERITY_TONE[severity] ?? "neutral"}>{severity === "UNKNOWN" ? "Unknown" : severity.charAt(0) + severity.slice(1).toLowerCase()}</Badge>;
+}
+
+const MATCH_STATUS = {
+  AFFECTED: { tone: "bad", label: "Affected" },
+  UNSUPPORTED: { tone: "neutral", label: "Not verified" },
+  CONFLICT: { tone: "warn", label: "Conflict" },
+} as const;
+
+export function MatchStatusBadge({ status }: { status: MatchStatus }) {
+  const view = MATCH_STATUS[status] ?? { tone: "neutral" as const, label: status };
+  return <Badge tone={view.tone}>{view.label}</Badge>;
 }
