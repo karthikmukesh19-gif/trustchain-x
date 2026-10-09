@@ -15,13 +15,21 @@ import { deleteProject, getProject, refreshMetadata } from "../services/projects
 import { errorMessage } from "../utils/errors";
 import { formatCount, formatDate, formatDateTime, formatSize } from "../utils/format";
 
-/** Evidence layers that later phases will add to this page. None of them exist yet. */
-const PLANNED_ANALYSIS: { name: string; phase: number | null }[] = [
-  { name: "Attack-path simulation", phase: 7 },
-  { name: "Maintainer and commit behaviour", phase: 8 },
-  { name: "Cross-layer AI reasoning", phase: 10 },
-  { name: "Trust score and security report", phase: 12 },
-  { name: "Self-healing SBOM (verification of external SBOMs and repair)", phase: null },
+/** Where each analysis layer lives. Every layer shows "not analysed" on its own page until it has been run. */
+const LAYER_LINKS: { name: string; path: string; note: string }[] = [
+  { name: "Trust score", path: "trust", note: "combines every layer; shows INSUFFICIENT DATA until enough has been analysed" },
+  { name: "Attack-path simulation", path: "attack-paths", note: "static paths from stored evidence" },
+  { name: "Maintainer behaviour", path: "maintainers", note: "behavioural indicators from public metadata" },
+  { name: "Commit behaviour", path: "commits", note: "security-relevant changes and anomalies in commits" },
+  { name: "Cross-layer AI reasoning", path: "ai-analysis", note: "findings that cite the evidence they rest on" },
+  { name: "Dataset quality", path: "dataset", note: "self-validating dataset of the results" },
+  { name: "Report", path: "report", note: "all seventeen sections, every statement with evidence" },
+];
+/** What the platform does not do. Listed so that its absence is not mistaken for a clean result. */
+const NOT_BUILT: { name: string; state: string }[] = [
+  { name: "Self-healing SBOM (verification of external SBOMs and repair)", state: "Not scheduled · not built" },
+  { name: "Comparison of candidate dependency versions before an upgrade", state: "Not scheduled · not built" },
+  { name: "Exploitability testing (running code or exploits)", state: "Out of scope · static analysis only" },
 ];
 
 const PENDING_POLL_MS = 2000;
@@ -228,19 +236,27 @@ export function ProjectDetailPage() {
         </div>
       )}
 
-      <section className="card mt-6 p-5">
-        <h2 className="text-base font-semibold">Not yet available</h2>
+      <section className="card mt-6 p-5" data-testid="layer-links">
+        <h2 className="text-base font-semibold">Further analysis</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted">
           Dependency analysis, vulnerability matching, static code reachability (Python), dependency intelligence and SBOMs
-          are available from the tabs above. Dependency intelligence ranks dependencies for attention; it does not predict
-          specific vulnerabilities or attacks. How likely exploitation is, and any trust score, are not assessed: the parts
-          of the platform that would produce them have not been built.
+          are available from the tabs above, and so are the layers below. Each layer reports nothing until it has been run:
+          a layer that has not been analysed is unknown, never a clean result.
         </p>
-        <ol className="mt-4 divide-y divide-line border-t border-line">
-          {PLANNED_ANALYSIS.map((item) => (
+        <ul className="mt-4 divide-y divide-line border-t border-line">
+          {LAYER_LINKS.map((item) => (
+            <li key={item.path} className="flex flex-wrap items-center justify-between gap-3 py-2.5 text-sm">
+              <Link className="font-medium text-trust hover:underline" to={`/projects/${id}/${item.path}`}>{item.name}</Link>
+              <span className="text-xs text-muted">{item.note}</span>
+            </li>
+          ))}
+        </ul>
+        <h3 className="mt-5 text-sm font-semibold">Not available</h3>
+        <ol className="mt-1 divide-y divide-line border-t border-line">
+          {NOT_BUILT.map((item) => (
             <li key={item.name} className="flex items-center justify-between gap-3 py-2.5 text-sm">
               <span>{item.name}</span>
-              <span className="shrink-0 font-mono text-xs text-faint">{item.phase === null ? "Not scheduled" : `Phase ${item.phase}`} · not built</span>
+              <span className="shrink-0 font-mono text-xs text-faint">{item.state}</span>
             </li>
           ))}
         </ol>

@@ -3,7 +3,8 @@ WORKDIR /app
 # Once a package-lock.json has been generated and committed, switch this to
 # `COPY package.json package-lock.json ./` and `npm ci` for reproducible builds.
 COPY package.json package-lock.json* ./
-RUN npm install --no-audit --no-fund
+# With the committed lockfile the build installs exactly the recorded versions (npm ci verifies their integrity hashes).
+RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
 COPY . .
 RUN npm run build
 

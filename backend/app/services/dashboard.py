@@ -14,7 +14,7 @@ from typing import Any
 from bson import ObjectId
 from pymongo.database import Database
 
-from app.models.collections import AUDIT_LOGS, PROJECTS
+from app.models.collections import AUDIT_LOGS, PROJECTS, TRUST_SCORES
 from app.services import projects as project_service
 
 ACTIVITY_DAYS = 14
@@ -58,8 +58,24 @@ def build_summary(db: Database, owner_id: ObjectId, now: datetime | None = None)
         for e in events
     ]
 
+    # The current trust result of each project: only one calculated for its latest snapshot counts as current.
+    trust = []
+    for p in projects[:50]:
+        score = None
+        if p.get("latest_snapshot_id") is not None:
+            score = db[TRUST_SCORES].find_one({"project_id": p["_id"], "snapshot_id": p["latest_snapshot_id"]},
+                                              {"status": 1, "trust_score": 1, "risk_score": 1, "confidence": 1, "coverage": 1, "created_at": 1,
+                                               "band": 1}, sort=[("created_at", -1), ("_id", -1)])
+        entry = {"project_id": str(p["_id"]), "name": p["name"], "analysed": p.get("latest_snapshot_id") is not None,
+                 "status": score["status"] if score else "NOT_ANALYSED"}
+        if score:
+            # Score fields exist only when a score was calculated: a project without one carries no placeholder figures.
+            entry.update({key: score.get(key) for key in ("trust_score", "risk_score", "confidence", "coverage", "band", "created_at")})
+        trust.append(entry)
+
     return {
         "generated_at": now,
+        "trust": trust,
         "projects_total": len(projects),
         "projects_analysed": analysed,
         "projects_by_status": dict(by_status),

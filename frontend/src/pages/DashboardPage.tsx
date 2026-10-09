@@ -1,8 +1,10 @@
+import { useEffect, useState } from "react";
 import { FiPlus } from "react-icons/fi";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { RegistrationsChart } from "../charts/RegistrationsChart";
 import { EmptyState, ErrorNotice, PageHeader, Spinner } from "../components/Feedback";
+import { ProjectDashboards } from "../components/platform/ProjectDashboards";
 import { ProjectTable } from "../components/ProjectTable";
 import { StatTile } from "../components/StatTile";
 import { useAuth } from "../context/AuthContext";
@@ -13,6 +15,15 @@ import { describeAction, formatDateTime } from "../utils/format";
 export function DashboardPage() {
   const { user } = useAuth();
   const { data, error, loading, reload } = useAsync(getDashboardSummary, []);
+  const [params, setParams] = useSearchParams();
+  const [projectId, setProjectId] = useState(params.get("project") ?? "");
+  const trust = data?.trust ?? [];
+  // The project whose dashboards are shown: the one asked for, else the first with a score, else the first analysed, else the first.
+  useEffect(() => {
+    if (projectId && trust.some((item) => item.project_id === projectId)) return;
+    const preferred = trust.find((item) => item.status === "SCORED") ?? trust.find((item) => item.analysed) ?? trust[0];
+    if (preferred) setProjectId(preferred.project_id);
+  }, [trust, projectId]);
 
   if (loading && !data) return <Spinner label="Loading dashboard" />;
   if (error && !data) return <ErrorNotice message={error} onRetry={() => void reload()} />;
@@ -49,7 +60,11 @@ export function DashboardPage() {
           value={`${data.projects_analysed}/${data.projects_total}`}
           note="Dependency analysis completed at least once"
         />
-        <StatTile label="Trust score" value="—" note="Not built yet: needs the later analysis phases" />
+        <StatTile
+          label="Projects with a trust score"
+          value={`${trust.filter((item) => item.status === "SCORED").length}/${data.projects_total}`}
+          note="Calculated for the current snapshot; never estimated"
+        />
       </div>
 
       {!hasProjects ? (
@@ -62,13 +77,31 @@ export function DashboardPage() {
               </Link>
             }
           >
-            Register a public GitHub repository to start. Its metadata is fetched straight away, and you can then run a
-            dependency analysis on it. Vulnerability, SBOM and behaviour analysis are not built yet.
+            Register a public GitHub repository to start. Its metadata is fetched straight away, and you can then run the
+            analyses on it. No score is shown until an analysis has produced one.
           </EmptyState>
         </div>
       ) : (
         <>
-          <section className="mt-8">
+          <section className="mt-8" aria-label="Project dashboards" data-testid="dashboards">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-base font-semibold">Project dashboards</h2>
+              <label className="flex items-center gap-2 text-sm">
+                <span className="text-muted">Project</span>
+                <select className="rounded-md border border-line bg-surface px-2 py-1" value={projectId} data-testid="dashboard-project"
+                  onChange={(event) => { setProjectId(event.target.value); setParams({ project: event.target.value }, { replace: true }); }}>
+                  {trust.map((item) => (
+                    <option key={item.project_id} value={item.project_id}>
+                      {item.name} — {item.status === "SCORED" ? `trust ${item.trust_score}` : item.status === "INSUFFICIENT_DATA" ? "insufficient data" : item.analysed ? "no trust score yet" : "not analysed"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {projectId && <ProjectDashboards key={projectId} projectId={projectId} />}
+          </section>
+
+          <section className="mt-10">
             <div className="mb-3 flex items-baseline justify-between">
               <h2 className="text-base font-semibold">Recent projects</h2>
               <Link to="/projects" className="text-sm font-medium text-trust hover:underline">

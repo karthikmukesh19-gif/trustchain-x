@@ -4,12 +4,19 @@ import { NavLink } from "react-router-dom";
 export function ProjectTabs({ projectId }: { projectId: string }) {
   const tabs = [
     { to: `/projects/${projectId}`, label: "Overview", end: true },
+    { to: `/projects/${projectId}/trust`, label: "Trust", end: false },
     { to: `/projects/${projectId}/dependencies`, label: "Dependencies", end: false },
     { to: `/projects/${projectId}/graph`, label: "Dependency graph", end: false },
     { to: `/projects/${projectId}/vulnerabilities`, label: "Vulnerabilities", end: false },
     { to: `/projects/${projectId}/reachability`, label: "Code reachability", end: false },
     { to: `/projects/${projectId}/fragility`, label: "Dependency intelligence", end: false },
     { to: `/projects/${projectId}/sbom`, label: "SBOM", end: false },
+    { to: `/projects/${projectId}/attack-paths`, label: "Attack paths", end: false },
+    { to: `/projects/${projectId}/maintainers`, label: "Maintainers", end: false },
+    { to: `/projects/${projectId}/commits`, label: "Commits", end: false },
+    { to: `/projects/${projectId}/ai-analysis`, label: "AI analysis", end: false },
+    { to: `/projects/${projectId}/dataset`, label: "Dataset", end: false },
+    { to: `/projects/${projectId}/report`, label: "Report", end: false },
   ];
   return (
     <nav className="mb-6 flex gap-1 overflow-x-auto border-b border-line" aria-label="Project sections">

@@ -8,6 +8,7 @@ so tokens stop working on restart but nothing is ever hard-coded.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import secrets
@@ -48,7 +49,34 @@ def validate_provider_url(setting: str, value: str, allowed_hosts: tuple[str, ..
     host = (parts.hostname or "").lower()
     if not host or host not in allowed_hosts:
         raise ValueError(f"{setting} host {host or '(none)'!r} is not in {allow_list}")
+    if internal_host(host):
+        # Refused even when listed: an outbound data source is a public service, never an address inside the deployment.
+        raise ValueError(f"{setting} host {host!r} is an IP address or an internal name; a public host name is required")
     return f"https://{host}{parts.path.rstrip('/')}"
+
+
+_INTERNAL_SUFFIXES = (".local", ".localhost", ".internal", ".lan", ".home", ".corp", ".intranet", ".svc", ".cluster.local")
+
+
+def internal_host(host: str) -> bool:
+    """Whether a host is an IP literal (of any range), a single-label name, or a name reserved for internal use.
+
+    Outbound sources are named public services. This check is on the name only: it does not resolve it, so it does
+    not defend against a public name that resolves to a private address. Redirects are refused separately.
+    """
+    host = host.strip("[]").rstrip(".").lower()
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    if host.replace(".", "").isdigit() or host.startswith("0x"):          # decimal, dotted-short or hexadecimal address forms
+        return True
+    return "." not in host or host == "localhost" or host.endswith(_INTERNAL_SUFFIXES)
+
+
+GITHUB_TOKEN_PLACEHOLDERS = frozenset({"your_github_token_here", "changeme", "<your-token>", "your-token-here"})
+AI_PROVIDERS = ("deterministic",)
 
 
 class SettingsError(RuntimeError):
@@ -81,6 +109,8 @@ class Settings(BaseModel):
     job_rate_window_seconds: int = Field(default=60, ge=1)
 
     github_api_url: str = "https://api.github.com"
+    # The GitHub API host must be listed here, like every other outbound host. Only GitHub Enterprise installations change it.
+    github_allowed_hosts: tuple[str, ...] = ("api.github.com",)
     github_token: str | None = Field(default=None, repr=False)
     github_timeout_seconds: float = Field(default=8.0, gt=0, le=60)
 
@@ -136,6 +166,38 @@ class Settings(BaseModel):
     intelligence_timeout_seconds: int = Field(default=600, ge=5)
     intelligence_history_limit: int = Field(default=50, ge=2)                    # analyses kept per project and kind
 
+    # Attack-path simulation. A static search over stored evidence; every bound below keeps it finite.
+    attack_path_max_depth: int = Field(default=12, ge=1, le=64)                  # dependency steps in one path
+    attack_path_max_paths: int = Field(default=500, ge=1, le=5000)               # paths stored per analysis
+    attack_path_max_routes: int = Field(default=3, ge=1, le=10)                  # dependency chains listed per path
+    attack_path_max_expansions: int = Field(default=20_000, ge=100)              # search steps per vulnerable package
+    attack_path_graph_max_nodes: int = Field(default=400, ge=10, le=5000)        # nodes in the combined graph view
+
+    # Maintainer behaviour and commit behaviour. Both read public GitHub metadata through the configured API host;
+    # commit content is analysed as text and never executed.
+    maintainer_max_commits: int = Field(default=500, ge=1, le=5000)              # commits read per maintainer analysis
+    maintainer_max_releases: int = Field(default=100, ge=0, le=1000)
+    commit_analysis_max_commits: int = Field(default=30, ge=1, le=200)           # commits analysed per run
+    commit_baseline_commits: int = Field(default=100, ge=5, le=1000)             # earlier commits a baseline is built from
+    commit_max_files: int = Field(default=300, ge=1, le=3000)                    # changed files inspected per commit
+    commit_max_patch_bytes: int = Field(default=200_000, ge=1024)                # diff text inspected per file
+    commit_poll_interval_minutes: int = Field(default=0, ge=0, le=10_080)        # 0: no automatic polling
+    behaviour_timeout_seconds: int = Field(default=300, ge=5)
+
+    # Cross-layer reasoning. "deterministic" is the built-in rule engine; it needs no external service.
+    ai_provider: str = "deterministic"
+    # Dataset validation and the trust engine.
+    dataset_max_records: int = Field(default=30_000, ge=1)
+    trust_min_coverage: float = Field(default=0.6, ge=0.0, le=1.0)               # share of weight that must be known
+
+    @field_validator("ai_provider")
+    @classmethod
+    def _known_ai_provider(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in AI_PROVIDERS:
+            raise ValueError(f"AI_PROVIDER must be one of: {', '.join(AI_PROVIDERS)}")
+        return value
+
     @field_validator("app_env")
     @classmethod
     def _known_env(cls, value: str) -> str:
@@ -175,7 +237,7 @@ class Settings(BaseModel):
             raise ValueError(f"VULNERABILITY_PROVIDERS contains unknown provider(s): {', '.join(unknown)}")
         return value
 
-    @field_validator("vulnerability_allowed_hosts", "package_metadata_allowed_hosts")
+    @field_validator("vulnerability_allowed_hosts", "package_metadata_allowed_hosts", "github_allowed_hosts")
     @classmethod
     def _lower_hosts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(v.lower() for v in value)
@@ -191,6 +253,8 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def _provider_urls_are_safe(self) -> "Settings":
+        object.__setattr__(self, "github_api_url", validate_provider_url(
+            "GITHUB_API_URL", self.github_api_url, self.github_allowed_hosts, "GITHUB_ALLOWED_HOSTS"))
         if "osv" in self.vulnerability_providers:
             object.__setattr__(self, "osv_api_url", validate_provider_url("OSV_API_URL", self.osv_api_url, self.vulnerability_allowed_hosts))
         for provider, field_name, setting in (("pypi", "pypi_api_url", "PYPI_API_URL"), ("npm", "npm_registry_url", "NPM_REGISTRY_URL")):
@@ -268,6 +332,22 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         "INTELLIGENCE_MAX_EDGES": "intelligence_max_edges",
         "INTELLIGENCE_TIMEOUT_SECONDS": "intelligence_timeout_seconds",
         "INTELLIGENCE_HISTORY_LIMIT": "intelligence_history_limit",
+        "ATTACK_PATH_MAX_DEPTH": "attack_path_max_depth",
+        "ATTACK_PATH_MAX_PATHS": "attack_path_max_paths",
+        "ATTACK_PATH_MAX_ROUTES": "attack_path_max_routes",
+        "ATTACK_PATH_MAX_EXPANSIONS": "attack_path_max_expansions",
+        "ATTACK_PATH_GRAPH_MAX_NODES": "attack_path_graph_max_nodes",
+        "MAINTAINER_MAX_COMMITS": "maintainer_max_commits",
+        "MAINTAINER_MAX_RELEASES": "maintainer_max_releases",
+        "COMMIT_ANALYSIS_MAX_COMMITS": "commit_analysis_max_commits",
+        "COMMIT_BASELINE_COMMITS": "commit_baseline_commits",
+        "COMMIT_MAX_FILES": "commit_max_files",
+        "COMMIT_MAX_PATCH_BYTES": "commit_max_patch_bytes",
+        "COMMIT_POLL_INTERVAL_MINUTES": "commit_poll_interval_minutes",
+        "BEHAVIOUR_TIMEOUT_SECONDS": "behaviour_timeout_seconds",
+        "AI_PROVIDER": "ai_provider",
+        "DATASET_MAX_RECORDS": "dataset_max_records",
+        "TRUST_MIN_COVERAGE": "trust_min_coverage",
         "OSV_API_URL": "osv_api_url",
         "VULNERABILITY_TIMEOUT_SECONDS": "vulnerability_timeout_seconds",
         "VULNERABILITY_BATCH_SIZE": "vulnerability_batch_size",
@@ -289,10 +369,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         values["package_metadata_providers"] = _split(env["PACKAGE_METADATA_PROVIDERS"])
     if env.get("PACKAGE_METADATA_ALLOWED_HOSTS", "").strip():
         values["package_metadata_allowed_hosts"] = _split(env["PACKAGE_METADATA_ALLOWED_HOSTS"])
+    if env.get("GITHUB_ALLOWED_HOSTS", "").strip():
+        values["github_allowed_hosts"] = _split(env["GITHUB_ALLOWED_HOSTS"])
     if env.get("VULNERABILITY_ALLOWED_HOSTS", "").strip():
         values["vulnerability_allowed_hosts"] = _split(env["VULNERABILITY_ALLOWED_HOSTS"])
-    if env.get("GITHUB_TOKEN", "").strip():
-        values["github_token"] = env["GITHUB_TOKEN"].strip()
+    token = env.get("GITHUB_TOKEN", "").strip()
+    # The placeholder from .env.example is not a token: sending it would make GitHub reject every request.
+    if token and token.lower() not in GITHUB_TOKEN_PLACEHOLDERS:
+        values["github_token"] = token
 
     try:
         return Settings(**values)

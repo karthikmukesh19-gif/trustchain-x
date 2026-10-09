@@ -215,30 +215,108 @@ Fields, formulas, classifications and error codes are defined in
 Deleting a project also deletes its dependency-intelligence analyses and
 their rows. Cached registry metadata is shared reference data and is kept.
 
-## Planned
+## Implemented (Phases 6–13)
 
-These endpoints are part of the target API and are **not implemented**;
-calling them returns 404 today. The originally planned `/analyze`, `/status`
-and `/dependency-graph` paths were replaced by the Phase 2 routes above.
+All routes below are under `/api/projects/{id}`, require authentication and
+answer 404 for a project of another user. Every `POST …/analyze` (and
+`POST …/ai-analysis`, `POST …/datasets/validate`) accepts an empty body or
+`{}`, rejects unknown fields, is limited by the job rate limit, and returns
+**202** `{job}`. It returns **409** when the project has no snapshot (where
+one is needed), when a prerequisite layer is missing, or while another job is
+queued or running for the project. Progress is read from
+`GET /api/projects/{id}/jobs`. A job ends `completed`, `partial` (results
+stored; part of the input could not be collected, with a code and message)
+or `failed` (nothing stored).
 
-| Method | Path | Phase |
+List responses carry `{job, snapshot, analysis, total, skip, limit, items}`.
+`analysis` is `null` until an analysis of the latest snapshot exists, and
+then there are no items: "not analysed" is never an empty result.
+
+### Attack paths (Phase 6) — [phase6.md](phase6.md)
+
+| Method | Path | Notes |
 |---|---|---|
-| POST | `/api/projects/{id}/sbom/repair` | unscheduled |
-| GET | `/api/projects/{id}/predictions` (candidate-version comparison) | 6 |
-| GET | `/api/projects/{id}/attack-paths` | 7 |
-| GET | `/api/projects/{id}/maintainers` | 8 |
-| GET | `/api/projects/{id}/maintainer-behaviour` | 8 |
-| GET | `/api/projects/{id}/commits` | 8 |
-| GET | `/api/projects/{id}/commit-analysis` | 9 |
-| GET | `/api/projects/{id}/ai-analysis` | 10 |
-| POST | `/api/datasets` | 11 |
-| POST | `/api/datasets/{id}/validate` | 11 |
-| GET | `/api/datasets/{id}/quality` | 11 |
-| GET | `/api/projects/{id}/trust-score` | 12 |
-| GET | `/api/projects/{id}/report` | 13 |
-| WS | `/ws/projects/{project_id}` | 9 (job progress is polled through `analysis/status` until then) |
+| POST | `/attack-paths/analyze` | needs a snapshot and a vulnerability check |
+| GET | `/attack-paths` | filters `status`, `level`, `severity`, `q`; `skip`, `limit` |
+| GET | `/attack-paths/graph` | combined graph, bounded; `?without=<node id>` for the what-if; 404 until an analysis exists |
+| GET | `/attack-paths/history` | earlier analyses |
+| GET | `/attack-paths/{path_id}` | nodes, edges, evidence, score terms, alternatives, break points |
 
-Two endpoints exist that were not in the original list:
-`POST /api/projects/{id}/refresh-metadata` and `DELETE /api/projects/{id}`
-(project management), plus `GET /api/auth/me`, `GET /api/health*` and
-`GET /api/dashboard/summary`.
+### Maintainer behaviour (Phase 7) — [phase7.md](phase7.md)
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/maintainers/analyze` | needs no snapshot; reads public GitHub metadata |
+| GET | `/maintainers` | repository profile, indicators and contributors; `q`, `skip`, `limit` |
+| GET | `/maintainers/history` | earlier analyses |
+| GET | `/maintainers/{maintainer_id}` | one contributor and the repository profile |
+
+### Commit behaviour (Phase 8) — [phase8.md](phase8.md)
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/commits/analyze` | check for new commits now |
+| POST | `/commits/monitoring` | body `{"enabled": true|false}`; returns `{monitoring}` |
+| GET | `/commits` | filters `level`, `indicator`, `q`; `sort=time|anomaly` |
+| GET | `/commits/{sha}` | full 40-character id; findings, factors, baseline, events |
+| GET | `/security-events` | filters `type`, `severity`, `sha` |
+| GET | `/behaviour-events` | filters `type`, `severity`, `sha` |
+
+### Cross-layer reasoning (Phase 9) — [phase9.md](phase9.md)
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/ai-analysis` | runs the deterministic rule engine over stored results |
+| GET | `/ai-analysis` | filters `severity`, `category`, `layer` |
+| GET | `/ai-analysis/history` | earlier runs with grounding metrics |
+| GET | `/ai-analysis/{finding_id}` | statements, evidence, conditions, confidence terms, audit record |
+
+### Dataset (Phase 10) — [phase10.md](phase10.md)
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/datasets/validate` | builds a version when results changed, then validates the stored records |
+| GET | `/datasets` | versions, newest first |
+| GET | `/datasets/{dataset_id}` | version, live hash verification, records (`suspicious`, `vulnerable`, `skip`, `limit`) |
+| GET | `/datasets/{dataset_id}/quality` | factors, problems, duplicates, distributions; `history` |
+
+### Trust (Phase 11) — [phase11.md](phase11.md)
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/trust/analyze` | combines whatever the layers have stored for the latest snapshot |
+| GET | `/trust` | `{job, snapshot, trust, model_version, weights, labels, weights_statement, meaning, …}`; `trust` is `null` until calculated. `trust.status` is `SCORED` or `INSUFFICIENT_DATA`; in the latter `trust_score` and `risk_score` are `null` |
+| GET | `/trust/history` | `limit` up to 200 |
+| GET | `/trust/compare` | `base` and `target` are ids of stored results |
+| GET | `/trust/explanation` | 404 until a result exists for the latest snapshot |
+
+### Overview and report (Phase 12) — [phase12.md](phase12.md)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/overview` | every layer's status, trust, distributions, top items, timeline, measured values |
+| GET | `/report` | `format=json` (default) or `markdown` (attachment). 500 rather than a report with an unsupported statement |
+
+Account level:
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/dashboard/summary` | now includes `trust` per project; score fields are present only when a score exists |
+| GET | `/api/dashboard/evaluation` | evaluation measures and their state; unevaluated measures have no value |
+
+Deleting a project also deletes its runs, attack paths, maintainer profiles,
+commit analyses and events, findings, dataset versions and records, and trust
+scores.
+
+## Not implemented
+
+| Method | Path | State |
+|---|---|---|
+| POST | `/api/projects/{id}/sbom/repair` | self-healing SBOM: not built |
+| GET | `/api/projects/{id}/predictions` (candidate-version comparison) | not built |
+| WS | `/ws/projects/{project_id}` | not built; progress and events are polled |
+| — | PDF export of the report | not built; JSON and Markdown only |
+
+The paths differ in places from the original plan: all dataset, trust,
+commit and reasoning routes are scoped to a project
+(`/api/projects/{id}/…`), which is what makes owner isolation uniform.

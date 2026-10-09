@@ -2,12 +2,10 @@
 
 Database: `trustchain_x` (configurable through `MONGODB_DB`).
 
-All 41 collections are declared, with their indexes, in
+All 42 collections are declared, with their indexes, in
 `backend/app/models/collections.py`; `ensure_indexes()` creates the indexes at
-start-up and is safe to run repeatedly. **Declared does not mean populated.**
-The "Written from" column says which phase starts writing a collection.
-Field lists for collections that are not yet written are the planned shape and
-may be refined when the owning phase is built.
+start-up and is safe to run repeatedly. 41 are written by the platform; one
+(`remediation_actions`) is declared and unused.
 
 Conventions:
 
@@ -384,23 +382,164 @@ Rows are never updated in place: a new analysis writes new rows under a new
 - `analysis_jobs` gains three job types and the state `partial`.
 - No existing collection or document is changed.
 
-## Collections declared for later phases
+### Phases 6–13 collections
 
-| Collection | Purpose | Key fields (planned) | Indexes | Written from |
-|---|---|---|---|---|
-| `attack_paths` | Simulated paths (graph-based, defensive) | `project_id`, `snapshot_id`, `nodes`, `path_risk`, `impact` | `{project_id, snapshot_id, path_risk:-1}` | Phase 7 |
-| `maintainers` | Public contributor identity | `platform`, `login` | `{platform, login}` unique | Phase 8 |
-| `maintainer_profiles` | Behaviour baseline per repo and maintainer | `repository_id`, `maintainer_id`, baseline statistics | `{repository_id, maintainer_id}` unique | Phase 8 |
-| `behaviour_events` | Deviations from baseline | `repository_id`, `project_id`, `occurred_at`, `anomaly_score`, `confidence`, indicators | `{repository_id, occurred_at:-1}`; `{project_id, anomaly_score:-1}` | Phase 8 |
-| `commits` | Commit metadata | `repository_id`, `sha`, `author`, `committed_at`, changed files | `{repository_id, sha}` unique; `{repository_id, committed_at:-1}` | Phase 8 |
-| `commit_analysis` | Security classification of a commit | `commit_id`, `project_id`, `risk_level`, findings | `{commit_id}` unique; `{project_id, risk_level}` | Phase 9 |
-| `security_events` | Real-time events pushed to the UI | `project_id`, `type`, `severity`, `created_at` | `{project_id, created_at:-1}` | Phase 9 |
-| `trust_scores` | Score history with component scores and weights used | `project_id`, `trust_score`, `risk_score`, `components`, `weights`, `reasons`, `created_at` | `{project_id, created_at:-1}` | Phase 12 |
-| `ai_findings` | Evidence-grounded findings | `project_id`, `snapshot_id`, `finding`, `severity`, `confidence`, `evidence` (ids), `reasoning`, `recommendation` | `{project_id, snapshot_id, severity}` | Phase 10 |
-| `remediation_actions` | Recommended or applied actions | `project_id`, `action`, `status`, `created_at` | `{project_id, created_at:-1}` | Phase 10 |
-| `datasets` | Dataset registry | `name`, `source`, `version`, `hash`, `license`, `language`, `label_schema`, `provenance`, `quality_score`, `duplicate_rate`, `class_distribution`, `validation_status` | `{name, version}` unique; `{owner_id}` | Phase 11 |
-| `dataset_records` | Records of a dataset | `dataset_id`, `record_hash`, payload, label | `{dataset_id, record_hash}` | Phase 11 |
-| `dataset_quality` | Validation results and trust score | `dataset_id`, checks, indicators, `created_at` | `{dataset_id, created_at:-1}` | Phase 11 |
+Rows written by a layer carry `analysis_id` (the `_id` of its run in
+`analysis_runs`), `project_id`, `repository_id` and `created_at`; these are
+not repeated below. No collection stores an e-mail address or an unmasked
+secret-like value.
+
+#### `analysis_runs` (Phases 6–9)
+
+One document per execution of a layer. A run is visible only in state
+`COMPLETE`; a run that could not be stored completely is removed with its
+rows.
+
+| Field | Notes |
+|---|---|
+| `kind` | `attack_paths`, `maintainers`, `commits`, `ai` |
+| `state` | `RUNNING`, `COMPLETE` |
+| `model_version` | for example `attack-path-v1` |
+| `snapshot_id`, `commit_sha`, `branch` | for snapshot-bound kinds |
+| `inputs`, `input_digest` | what the run read; SHA-256 used to recognise an unchanged input |
+| `summary` | counts, distributions, data status, grounding metrics (kind `ai`), rule trace |
+| `job_id`, `completed_at` | |
+
+Indexes: `{project_id, kind, created_at:-1}`; `{project_id, kind, input_digest}`.
+
+#### `attack_paths` (Phase 6)
+
+| Field | Notes |
+|---|---|
+| `attack_path_id` | stable id derived from package and vulnerability |
+| `snapshot_id` | |
+| `status` | `SUPPORTED_PATH`, `POTENTIAL_PATH`, `UNKNOWN_PATH`, `OBSERVED_COMPONENT` |
+| `score`, `level`, `confidence` | score 0–100; `LOW` / `MEDIUM` / `HIGH` |
+| `components` | the four terms of the score and the steps that lowered confidence |
+| `target`, `advisory`, `reachability` | the package, the matched vulnerability and the reachability state the path is about |
+| `nodes`, `edges` | stages with evidence and basis; edge kinds with confidence |
+| `evidence` | references to the stored records the path rests on |
+| `route`, `alternative_routes`, `routes_truncated` | the shortest dependency chain, other chains, and whether a limit cut the search |
+| `downstream`, `related` | dependents of the package; Phase 5 scores attached for context, not mixed into the score |
+| `break_points` | `RECOMMENDED` changes |
+| `explanation`, `exploit_confirmed` | `exploit_confirmed` is always `false` |
+| `model_version` | |
+
+Indexes: `{analysis_id, attack_path_id}` unique; `{analysis_id, score:-1}`;
+`{project_id, snapshot_id}`.
+
+#### `maintainer_profiles`, `maintainers` (Phase 7)
+
+`maintainer_profiles` — one repository profile per analysis:
+`contributor_count`, `commit_frequency`, `contributor_concentration`,
+`release_frequency`, `activity_pattern`, `weekly_activity`,
+`inactivity_gaps`, `rapid_clusters`, `change_patterns`,
+`anomaly_indicators` (each `OBSERVED` / `NOT_OBSERVED` / `UNKNOWN` with
+evidence), `attention_score`, `attention_level`, `confidence`,
+`score_detail`, `data_status`, `unavailable`, `evidence`, `meaning`,
+`model_version`, `as_of`. Index: `{analysis_id}` unique;
+`{project_id, created_at:-1}`.
+
+`maintainers` — one row per contributor per analysis: `maintainer_id`,
+`login`, `display_name`, `identified_by`, `account_type`, `commits`, `share`,
+`rank`, `first_commit_at`, `last_commit_at`, `active_days`, `recent_commits`,
+`recent_share`, `merge_commits`, `verified_commits`, `change_patterns`,
+`indicators`, `sample_commits`. Index: `{analysis_id, maintainer_id}` unique;
+`{project_id, created_at:-1}`.
+
+#### `commits`, `commit_analysis`, `behaviour_events`, `security_events` (Phase 8)
+
+`commits` — commit metadata shared per repository: `repository_id`, `sha`,
+author login and name, times, message summary. Indexes:
+`{repository_id, sha}` unique; `{repository_id, committed_at:-1}`.
+
+`commit_analysis` — one document per analysed commit per project:
+`commit_sha`, `author_login`, `author_name`, `author_email_tag` (a hash tag,
+not the address), `committed_at`, `message`, `parent_count`, `is_merge`,
+`stats`, `files`, `coverage` (how much of the diff could be inspected),
+`findings` (type, rule, severity, basis, confidence, file, line, masked
+excerpt), `indicator_types`, `anomaly_score`, `level`, `confidence`,
+`factors`, `baseline`, `meaning`, `model_version`. Indexes:
+`{project_id, commit_sha}` unique; `{project_id, committed_at:-1}`;
+`{project_id, anomaly_score:-1}`.
+
+`behaviour_events` and `security_events` — append-only events:
+`commit_sha`, `repository`, `changed_files`, `event_type`, `severity`,
+`confidence`, `evidence`, `observed_or_inferred`, `anomaly_score`, `summary`,
+`review_note`, `occurred_at`. `security_events` holds the events of severity
+`MEDIUM` or above. Indexes: `{project_id, occurred_at:-1}`;
+`{project_id, commit_sha}`.
+
+#### `ai_findings` (Phase 9)
+
+| Field | Notes |
+|---|---|
+| `finding_id`, `rule_id`, `category`, `severity` | |
+| `subject` | what the finding is about (package, commit, project) |
+| `statements` | each `{basis, text, evidence_refs}` |
+| `evidence_refs`, `evidence` | ids cited, and the evidence items themselves (collection, id, summary, basis, layer) |
+| `contributing_layers`, `conditions` | layers cited; which conditions held, did not, or were unknown |
+| `confidence`, `confidence_detail` | the three terms |
+| `explanation`, `recommendation` | recommendation is `RECOMMENDED` and cites evidence |
+| `provider` | audit record: which provider phrased the explanation, whether its output was accepted |
+| `model_version`, `snapshot_id` | |
+
+Indexes: `{analysis_id, finding_id}` unique; `{project_id, snapshot_id}`.
+
+#### `datasets`, `dataset_records`, `dataset_quality` (Phase 10)
+
+`datasets` — one document per version: `version`, `snapshot_id`,
+`commit_sha`, `schema_version`, `record_count`, `hash_algorithm`,
+`canonical_form`, `dataset_hash`, `previous_dataset_id`,
+`previous_dataset_hash`, `chain_hash`, `sources` (contributing layers with
+references), `changes`, `truncated`, `records_pruned`, `latest_quality`,
+`validations`. Indexes: `{project_id, version}` unique;
+`{project_id, created_at:-1}`.
+
+`dataset_records` — write-once: `dataset_id`, `record_id`, `identity`,
+`features`, `labels`, `provenance`, `record_hash`. Indexes:
+`{dataset_id, record_id}` unique; `{dataset_id, record_hash}`.
+
+`dataset_quality` — one document per validation: `dataset_id`,
+`dataset_version`, `status`, `quality_score`, `confidence`, `factors`,
+`integrity`, `completeness`, `provenance`, `consistency`, `duplicates`,
+`balance`, `timestamps`, `chain_intact`, `suspicious_records`, `reasons`,
+`warnings`, `limitation`, `model_version`. Indexes:
+`{dataset_id, created_at:-1}`; `{project_id, created_at:-1}`.
+
+#### `trust_scores` (Phase 11)
+
+| Field | Notes |
+|---|---|
+| `snapshot_id`, `commit_sha`, `branch` | |
+| `status` | `SCORED` or `INSUFFICIENT_DATA` |
+| `trust_score`, `risk_score`, `band` | `null` when `INSUFFICIENT_DATA` |
+| `confidence`, `coverage`, `min_coverage` | |
+| `risk_low`, `risk_high`, `trust_low`, `trust_high` | bounds left by unknown components |
+| `components` | per component: weight, status, risk, confidence, basis, detail, inputs, contribution, layer, reference |
+| `component_scores`, `unknown_components`, `known_weight`, `unknown_weight` | |
+| `weights`, `weights_statement`, `model_version` | the weights used and the statement that they are not statistically trained |
+| `evidence`, `explanation`, `insufficient_reason` | |
+| `input_digest` | an unchanged state is not stored twice |
+
+Index: `{project_id, created_at:-1}`.
+
+### Other changes in Phases 6–13
+
+- `projects` gains `commit_monitoring` (`enabled`, `last_checked_at`,
+  `last_head_sha`).
+- `analysis_jobs.type` gains `attack_path_analysis`, `maintainer_analysis`,
+  `commit_behaviour_analysis`, `ai_security_analysis`, `dataset_validation`,
+  `trust_analysis`.
+- `audit_logs.action` gains the request and outcome of each new job type,
+  `commits.monitoring.set` and `report.generate`.
+- Reports are generated on request and not stored.
+
+## Declared and unused
+
+| Collection | Purpose | State |
+|---|---|---|
+| `remediation_actions` | recommended or applied actions as records of their own | Not written. Recommendations are stored inside the finding, path or trust result they belong to |
 
 ## Notes
 
@@ -413,6 +552,8 @@ Rows are never updated in place: a new analysis writes new rows under a new
   snapshots, dependencies, graphs, vulnerability matches and synchronisation
   records, SBOMs with their components and diffs, reachability analyses with
   their source records, graph and findings, dependency-intelligence analyses
-  with their rows). The shared `repositories`, `dependency_versions`,
+  with their rows, analysis runs, attack paths, maintainer profiles, commit
+  analyses and events, findings, dataset versions with their records and
+  validations, and trust scores). The shared `repositories`, `dependency_versions`,
   `vulnerabilities` and `package_metadata` documents and the audit trail are
   kept.

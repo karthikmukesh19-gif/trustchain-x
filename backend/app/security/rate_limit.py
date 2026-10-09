@@ -2,7 +2,7 @@
 
 Counters live in process memory, so each backend process counts on its own.
 That is sufficient for a single-process deployment; Redis-backed counters are
-scheduled for Phase 14 (see docs/architecture.md, known limitations).
+not built (see docs/architecture.md, known limitations).
 """
 
 from __future__ import annotations

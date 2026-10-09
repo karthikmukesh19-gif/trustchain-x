@@ -30,6 +30,18 @@ const STAGE_LABELS: Record<string, string> = {
   FRAGILITY: "Score fragility",
   RISK_PROPAGATION: "Trace exposure",
   PREDICTION: "Indicators",
+  PATH_SEARCH: "Search paths",
+  SCORING: "Score",
+  COLLECTION: "Read GitHub",
+  PROFILING: "Profile",
+  INDICATORS: "Indicators",
+  DIFF_ANALYSIS: "Inspect diffs",
+  BASELINE: "Baseline",
+  CONTEXT: "Gather evidence",
+  REASONING: "Apply rules",
+  VALIDATION: "Validate",
+  RECORD_BUILDING: "Build records",
+  COMPONENTS: "Read layers",
 };
 
 const JOB_NAMES: Record<string, string> = {
@@ -41,6 +53,12 @@ const JOB_NAMES: Record<string, string> = {
   dependency_fragility_analysis: "A dependency fragility analysis",
   graph_risk_analysis: "A graph risk analysis",
   predictive_dependency_analysis: "A dependency intelligence analysis",
+  attack_path_analysis: "An attack-path simulation",
+  maintainer_analysis: "A maintainer behaviour analysis",
+  commit_behaviour_analysis: "A commit behaviour analysis",
+  ai_security_analysis: "A cross-layer reasoning run",
+  dataset_validation: "A dataset validation",
+  trust_analysis: "A trust analysis",
 };
 
 /**

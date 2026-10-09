@@ -1,6 +1,6 @@
 """Background worker process.
 
-Runs dependency-analysis, vulnerability and SBOM jobs. A heartbeat thread reports liveness
+Runs every background job type and, when polling is configured, queues periodic commit checks. A heartbeat thread reports liveness
 independently of the job loop, so a long analysis does not make the worker
 look dead.
 
@@ -21,7 +21,7 @@ from app.collectors.providers import build_providers
 from app.collectors.registries import build_registries
 from app.config.settings import Settings, get_settings
 from app.models.database import create_client, ensure_indexes, ping
-from app.services import analysis, jobs
+from app.services import analysis, behaviour, jobs
 from app.workers.heartbeat import beat
 
 logger = logging.getLogger("trustchain.worker")
@@ -83,6 +83,7 @@ def run(settings: Settings, redis_client: Any, db: Any, github: GitHubClient, st
     while not stop.is_set():
         try:
             if ping(db):
+                behaviour.poll_due(db, redis_client, settings)      # queues commit checks for monitored projects, when polling is on
                 process_available_jobs(settings, db, github, stop, providers, registries)
             else:
                 logger.warning("MongoDB is not reachable")

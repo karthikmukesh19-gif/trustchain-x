@@ -36,6 +36,12 @@ CODE_REACHABILITY_ANALYSIS = "code_reachability_analysis"
 DEPENDENCY_FRAGILITY_ANALYSIS = "dependency_fragility_analysis"
 GRAPH_RISK_ANALYSIS = "graph_risk_analysis"
 PREDICTIVE_DEPENDENCY_ANALYSIS = "predictive_dependency_analysis"
+ATTACK_PATH_ANALYSIS = "attack_path_analysis"
+MAINTAINER_ANALYSIS = "maintainer_analysis"
+COMMIT_BEHAVIOUR_ANALYSIS = "commit_behaviour_analysis"
+AI_SECURITY_ANALYSIS = "ai_security_analysis"
+DATASET_VALIDATION = "dataset_validation"
+TRUST_ANALYSIS = "trust_analysis"
 # A job that finished and stored its results, but could not collect everything it wanted (see job.error).
 PARTIAL = "partial"
 
@@ -49,6 +55,12 @@ STAGES: dict[str, tuple[str, ...]] = {
     GRAPH_RISK_ANALYSIS: ("QUEUED", "GRAPH_METRICS", "RISK_PROPAGATION", "COMPLETED"),
     PREDICTIVE_DEPENDENCY_ANALYSIS: ("QUEUED", "GRAPH_METRICS", "PACKAGE_METADATA", "FRAGILITY", "RISK_PROPAGATION", "PREDICTION",
                                      "COMPLETED"),
+    ATTACK_PATH_ANALYSIS: ("QUEUED", "GRAPH_BUILDING", "PATH_SEARCH", "SCORING", "COMPLETED"),
+    MAINTAINER_ANALYSIS: ("QUEUED", "COLLECTION", "PROFILING", "INDICATORS", "COMPLETED"),
+    COMMIT_BEHAVIOUR_ANALYSIS: ("QUEUED", "COLLECTION", "DIFF_ANALYSIS", "BASELINE", "SCORING", "COMPLETED"),
+    AI_SECURITY_ANALYSIS: ("QUEUED", "CONTEXT", "REASONING", "VALIDATION", "COMPLETED"),
+    DATASET_VALIDATION: ("QUEUED", "RECORD_BUILDING", "VALIDATION", "COMPLETED"),
+    TRUST_ANALYSIS: ("QUEUED", "COMPONENTS", "SCORING", "COMPLETED"),
 }
 JOB_TYPES = tuple(STAGES)
 
@@ -174,7 +186,10 @@ def run_job(db: Database, settings: Settings, providers: dict[str, Any], job: di
             registries: dict[str, Any] | None = None) -> dict[str, Any]:
     """Execute one claimed job. Never raises: every outcome is recorded on the job."""
     # Imported here so that the service modules can register their handlers without an import cycle.
-    from app.services import intelligence, reachability, sbom, vulnerabilities  # noqa: F401
+    from app.services import (  # noqa: F401
+        attack_paths, behaviour, datasets, intelligence, maintainers, reachability, reasoning, sbom, trust_service,
+        vulnerabilities,
+    )
 
     context = JobContext(db=db, settings=settings, providers=providers, started=time.monotonic(), github=github, registries=registries)
     try:

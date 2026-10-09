@@ -113,6 +113,10 @@ class FakeRepository:
         self.truncated = False
         self.tamper: set[str] = set()           # paths whose content is served corrupted
         self.size_kb: int | None = None
+        # History served by the list endpoints. None: the endpoint answers with an empty list.
+        self.history: list[dict] | None = None      # raw GitHub commit objects, newest first (may include "files"/"stats")
+        self.people: list[dict] | None = None       # raw contributor objects
+        self.published: list[dict] | None = None    # raw release objects, newest first
 
     def blob_id(self, path: str) -> str:
         from app.collectors.github import git_blob_id
@@ -138,6 +142,10 @@ class FakeRepository:
         if not rest:
             size = self.size_kb if self.size_kb is not None else sum(len(c) for c in self.files.values()) // 1024
             return httpx.Response(200, json={**GITHUB_REPO_PAYLOAD, "default_branch": self.branch, "size": size})
+        if rest[0] in ("contributors", "releases") or rest == ["commits"]:
+            return None     # paginated lists: answered by respond_list, which sees the query string
+        if rest[0] == "commits" and len(rest) == 2 and self.history is not None and any(c.get("sha") == rest[1] for c in self.history):
+            return httpx.Response(200, json=next(c for c in self.history if c.get("sha") == rest[1]))
         if rest[0] == "commits":
             return httpx.Response(200, json={"sha": self.commit_sha, "commit": {
                 "message": "Fixture commit\n\nbody", "tree": {"sha": self.tree_sha},
@@ -154,6 +162,18 @@ class FakeRepository:
                                                      "content": base64.encodebytes(body).decode()})
             return httpx.Response(404, json={"message": "Not Found"})
         return None
+
+
+def respond_list(repo: FakeRepository, request: httpx.Request) -> httpx.Response | None:
+    """The paginated list endpoints of a fake repository: commits, contributors, releases."""
+    parts = request.url.path.strip("/").split("/")
+    if len(parts) != 4 or parts[0] != "repos" or parts[3] not in ("commits", "contributors", "releases"):
+        return None
+    items = {"commits": repo.history, "contributors": repo.people, "releases": repo.published}[parts[3]] or []
+    if parts[3] == "commits":
+        items = [{k: v for k, v in item.items() if k not in ("files", "stats")} for item in items]   # the list has no diffs
+    per_page, page = int(request.url.params.get("per_page", 30)), int(request.url.params.get("page", 1))
+    return httpx.Response(200, json=items[(page - 1) * per_page:page * per_page])
 
 
 class GitHubStub:
@@ -176,7 +196,7 @@ class GitHubStub:
             if fragment in request.url.path:
                 return httpx.Response(status, json={"message": "simulated"}, headers=headers)
         if self.repo is not None and self.status == 200:
-            response = self.repo.respond(request.url.path)
+            response = self.repo.respond(request.url.path) or respond_list(self.repo, request)
             if response is not None:
                 return response
         return httpx.Response(self.status, json=self.payload, headers=self.headers)

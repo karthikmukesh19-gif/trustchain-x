@@ -65,6 +65,7 @@ REMEDIATION_ACTIONS = "remediation_actions"
 DATASETS = "datasets"
 DATASET_RECORDS = "dataset_records"
 DATASET_QUALITY = "dataset_quality"
+ANALYSIS_RUNS = "analysis_runs"
 ANALYSIS_JOBS = "analysis_jobs"
 AUDIT_LOGS = "audit_logs"
 
@@ -116,13 +117,15 @@ INDEXES: dict[str, list[Index]] = {
         idx(("project_id", A), ("snapshot_id", A), ("analyzer_version", A), unique=True),
         idx(("project_id", A), ("completed_at", D)),
     ],
-    ATTACK_PATHS: [idx(("project_id", A), ("snapshot_id", A), ("path_risk", D))],
-    MAINTAINERS: [idx(("platform", A), ("login", A), unique=True)],
-    MAINTAINER_PROFILES: [idx(("repository_id", A), ("maintainer_id", A), unique=True)],
-    BEHAVIOUR_EVENTS: [idx(("repository_id", A), ("occurred_at", D)), idx(("project_id", A), ("anomaly_score", D))],
+    ATTACK_PATHS: [idx(("analysis_id", A), ("attack_path_id", A), unique=True), idx(("analysis_id", A), ("score", D)),
+                   idx(("project_id", A), ("snapshot_id", A))],
+    MAINTAINERS: [idx(("analysis_id", A), ("maintainer_id", A), unique=True), idx(("project_id", A), ("created_at", D))],
+    MAINTAINER_PROFILES: [idx(("analysis_id", A), unique=True), idx(("project_id", A), ("created_at", D))],
+    BEHAVIOUR_EVENTS: [idx(("project_id", A), ("occurred_at", D)), idx(("project_id", A), ("commit_sha", A))],
     COMMITS: [idx(("repository_id", A), ("sha", A), unique=True), idx(("repository_id", A), ("committed_at", D))],
-    COMMIT_ANALYSIS: [idx(("commit_id", A), unique=True), idx(("project_id", A), ("risk_level", A))],
-    SECURITY_EVENTS: [idx(("project_id", A), ("created_at", D))],
+    COMMIT_ANALYSIS: [idx(("project_id", A), ("commit_sha", A), unique=True), idx(("project_id", A), ("committed_at", D)),
+                      idx(("project_id", A), ("anomaly_score", D))],
+    SECURITY_EVENTS: [idx(("project_id", A), ("occurred_at", D)), idx(("project_id", A), ("commit_sha", A))],
     PREDICTIONS: [
         idx(("project_id", A), ("snapshot_id", A), ("subject_type", A), ("subject_id", A)),
         idx(("analysis_id", A), ("node_id", A)),
@@ -142,11 +145,13 @@ INDEXES: dict[str, list[Index]] = {
                             idx(("project_id", A), ("snapshot_id", A))],
     PACKAGE_METADATA: [idx(("ecosystem", A), ("normalized_name", A), unique=True), idx(("fetched_at", D))],
     TRUST_SCORES: [idx(("project_id", A), ("created_at", D))],
-    AI_FINDINGS: [idx(("project_id", A), ("snapshot_id", A), ("severity", A))],
+    AI_FINDINGS: [idx(("analysis_id", A), ("finding_id", A), unique=True), idx(("project_id", A), ("snapshot_id", A))],
     REMEDIATION_ACTIONS: [idx(("project_id", A), ("created_at", D))],
-    DATASETS: [idx(("name", A), ("version", A), unique=True), idx(("owner_id", A))],
-    DATASET_RECORDS: [idx(("dataset_id", A), ("record_hash", A))],
-    DATASET_QUALITY: [idx(("dataset_id", A), ("created_at", D))],
+    DATASETS: [idx(("project_id", A), ("version", A), unique=True), idx(("project_id", A), ("created_at", D))],
+    DATASET_RECORDS: [idx(("dataset_id", A), ("record_id", A), unique=True), idx(("dataset_id", A), ("record_hash", A)),
+                      idx(("project_id", A))],
+    DATASET_QUALITY: [idx(("dataset_id", A), ("created_at", D)), idx(("project_id", A), ("created_at", D))],
+    ANALYSIS_RUNS: [idx(("project_id", A), ("kind", A), ("created_at", D)), idx(("project_id", A), ("kind", A), ("input_digest", A))],
     ANALYSIS_JOBS: [idx(("project_id", A), ("created_at", D)), idx(("state", A), ("created_at", A))],
     AUDIT_LOGS: [idx(("actor_id", A), ("timestamp", D)), idx(("action", A), ("timestamp", D))],
 }

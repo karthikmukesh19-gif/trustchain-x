@@ -8,9 +8,10 @@ from several layers (dependencies, SBOM, vulnerabilities, reachability,
 maintainer and commit behaviour), correlating it, and producing an explainable
 **Software Supply Chain Trust Score (0–100)**.
 
-This document describes the target architecture and marks what exists today.
-Status legend: **BUILT** (implemented and tested), **PLANNED** (designed, not
-implemented). Nothing marked PLANNED has code behind it yet.
+This document describes the architecture as built. Status legend: **BUILT**
+(implemented and tested), **PLANNED** (designed, not implemented). Nothing
+marked PLANNED has code behind it. "Tested" means the automated suites pass;
+what was verified in which environment is in [phase13.md](phase13.md).
 
 ---
 
@@ -34,52 +35,58 @@ The stack is not negotiable. Secrets come from environment variables only.
                          │
                          ▼
                 ┌─────────────────┐
-                │ React Frontend  │   BUILT (Phase 1 pages)
+                │ React Frontend  │   BUILT (dashboards, 14 project pages, report)
                 └────────┬────────┘
-                         │ REST / WebSocket
+                         │ REST (job status is polled)
                          ▼
                 ┌─────────────────┐
-                │ FastAPI Backend │   BUILT (auth, projects, analysis, health)
+                │ FastAPI Backend │   BUILT
                 └────────┬────────┘
-                         │
+                         │ jobs (MongoDB + Redis) → worker
         ┌────────────────┼────────────────┐
         ▼                ▼                ▼
  Repository        Dependency         SBOM Engine         BUILT, BUILT, BUILT (generate,
- Collector         Analyzer           & Verifier          verify, diff; repair: planned)
+ Collector         Analyzer           & Verifier          verify, diff; repair: PLANNED)
         └────────────────┼────────────────┘
                          ▼
-                Dependency Graph                          BUILT (prediction: Phase 6)
+                Dependency Graph                          BUILT
                          │
         ┌────────────────┼──────────────────┐
         ▼                ▼                  ▼
- Vulnerability      Reachability      Attack Path         BUILT (known-advisory matching),
- Analysis           Analysis          Simulation          BUILT (static, Python), PLANNED (Phase 7)
+ Vulnerability      Reachability      Fragility,          BUILT (OSV matching), BUILT (static,
+ Analysis           Analysis          Graph Risk,         Python), BUILT (Phase 5)
+                                      Predictive Risk
         └────────────────┼──────────────────┘
                          ▼
-              Behaviour Intelligence                      PLANNED (Phases 8, 9)
+               Attack-Path Simulation                     BUILT (Phase 6; static, no exploitation)
+                         │
              ┌───────────┴───────────┐
              ▼                       ▼
-     Maintainer Behaviour      Commit Behaviour
+     Maintainer Behaviour      Commit Behaviour           BUILT (Phases 7, 8; indicators, not verdicts)
              └───────────┬───────────┘
                          ▼
-                Predictive Engine                         PLANNED (Phases 5, 6)
+          layers.collect — one read of every layer        BUILT (Phase 12)
+                         │
+        ┌────────────────┼──────────────────┐
+        ▼                ▼                  ▼
+  Cross-Layer       Self-Validating     Trust Engine      BUILT (Phases 9, 10, 11). Reasoning is a
+  Reasoning         Dataset                               deterministic rule engine
+        └────────────────┼──────────────────┘
                          ▼
-              Cross-Layer AI Engine                       PLANNED (Phase 10)
-                         ▼
-                Trust Score Engine                        PLANNED (Phase 12)
-                         ▼
-               Security Report                            PLANNED (Phase 13)
+        Dashboards and evidence-backed report             BUILT (Phase 12)
 ```
+
+Candidate-version comparison and SBOM repair are PLANNED and have no code.
 
 ### Runtime services (Docker Compose)
 
 | Service | Role | Status |
 |---|---|---|
-| `frontend` | Nginx serving the built React app; proxies `/api` and `/ws` to the backend | BUILT |
+| `frontend` | Nginx (unprivileged) serving the built React app; proxies `/api` to the backend | BUILT |
 | `backend` | FastAPI application (Uvicorn) | BUILT |
 | `mongodb` | System of record | BUILT |
 | `redis` | Worker heartbeat and analysis job wake-ups | BUILT |
-| `worker` | Background process: runs dependency-analysis jobs and publishes a heartbeat | BUILT |
+| `worker` | Background process: runs every analysis job, queues commit checks for monitored projects when polling is enabled, and publishes a heartbeat | BUILT |
 
 ---
 
@@ -94,21 +101,31 @@ backend/app/
 ├── security/        password hashing, rate limiting, URL validation, security headers
 ├── schemas/         Pydantic request/response models
 ├── models/          MongoDB connection, collection names, index definitions
-├── services/        business logic (users, projects, audit log, dashboard, analysis, jobs,
-│                    vulnerabilities, sbom)
-├── collectors/      clients for external sources (GitHub metadata, commits, trees, blobs);
-│                    providers/ — vulnerability sources behind one interface (OSV)
+├── services/        business logic: users, projects, audit log, dashboard, analysis, jobs,
+│                    vulnerabilities, sbom, reachability, intelligence; runs.py (run records),
+│                    layers.py (one read of every layer), attack_paths, maintainers, behaviour,
+│                    reasoning, datasets, trust/ (weights, normalization, engine, explanation,
+│                    history), overview, report
+├── collectors/      GitHub client (metadata, trees, blobs, commits, contributors, releases,
+│                    commit diffs); providers/ — vulnerability sources (OSV);
+│                    registries/ — package metadata (PyPI, npm)
 ├── workers/         background worker process
-├── analyzers/       language / package-manager detection, dependency parsers,
-│                    normalisation, resolution; vulnerabilities/ — version ordering, CVSS,
-│                    affected-range matching; source/ — source inventory and per-language
-│                    static analyzers (Python); reachability/ — import mapping, code graph,
-│                    advisory symbol mapping, path search (fragility: PLANNED)
-├── graph/           dependency graph construction and path queries (propagation, attack paths: PLANNED)
+├── analyzers/       detection, dependency parsers, normalisation, resolution;
+│                    vulnerabilities/ — version ordering, CVSS, range matching;
+│                    source/, reachability/ — static source analysis and path search;
+│                    graph/, fragility/ — graph metrics, fragility, propagation;
+│                    attack_paths/ — nodes, edges, bounded search, score, simulation;
+│                    maintainers/ — activity, contributors, indicators, profile;
+│                    behavior/ — diff reading, rules, baseline, anomaly score;
+│                    dataset/ — integrity, provenance, quality, duplicates, balance, validation
+├── ai/              evidence store and validation, context, rules, confidence, prompts,
+│                    provider interface with the deterministic provider and the output guard
+├── evaluation/      metric functions, catalogue of measures, command-line runner
+├── graph/           dependency graph construction and path queries
 ├── sbom/            CycloneDX generation, canonical form and digests, diff
-│                    (parsing found SBOMs, reconstruction: PLANNED, Phase 4)
-├── ml/              PLANNED — models, features, evaluation
-└── websocket/       PLANNED — live progress and security events
+├── data/            bundled reference data read by the analyzers
+├── ml/              empty placeholder package: no model is trained
+└── websocket/       empty placeholder package: no push channel is built
 ```
 
 ### Design rules
@@ -134,30 +151,31 @@ backend/app/
 
 ## 4. Module dependency map
 
-Arrows read "depends on". A module may only be built once everything it
-points to exists — this ordering is what the roadmap follows.
+Arrows read "depends on".
 
 ```text
 auth, projects, health ──────────────► models (MongoDB), security, config
-repository collector ────────────────► projects, security (URL validation, sandboxed clone)
+repository collector ────────────────► projects, security (URL validation)
 dependency adapters ─────────────────► repository collector
 dependency graph ────────────────────► dependency adapters
 vulnerability intelligence ──────────► dependency adapters (PURLs, versions)
 reachability ────────────────────────► vulnerability intelligence, repository collector (source)
 SBOM engine ─────────────────────────► dependency adapters, dependency graph
-dependency fragility ────────────────► dependency graph, vulnerability intelligence, registry + repo metadata
-predictive graph ────────────────────► dependency graph, fragility, vulnerability intelligence
-attack-path simulation ──────────────► dependency graph, vulnerability intelligence, reachability
-behaviour intelligence ──────────────► repository collector (commits, contributors, releases)
-real-time monitoring ────────────────► behaviour intelligence, dependency adapters, websocket
-cross-layer AI ──────────────────────► every evidence producer above
-dataset trust ───────────────────────► models only (independent pipeline)
-trust score engine ──────────────────► all component scores + dataset trust
-reporting ───────────────────────────► trust score engine, cross-layer AI
+fragility, graph risk, predictive ───► dependency graph, vulnerability intelligence, reachability, registries
+attack-path simulation ──────────────► dependency graph, vulnerability intelligence, reachability, (fragility)
+maintainer behaviour ────────────────► repository collector (commits, contributors, releases), (commit behaviour)
+commit behaviour ────────────────────► repository collector (commit diffs), its own earlier results
+layers ──────────────────────────────► stored results of every layer above (reads only)
+cross-layer reasoning ───────────────► layers
+dataset ─────────────────────────────► stored results of the snapshot-bound layers
+trust engine ────────────────────────► layers
+overview, report ────────────────────► layers, trust, reasoning
 ```
 
-Shared infrastructure used by every analysis module: the **analysis job
-system** (`analysis_jobs` + worker + Redis queue) and the **audit log**.
+A dependency in brackets is optional: the layer runs without it and reports
+the corresponding input as unknown. Shared infrastructure used by every
+analysis module: the **analysis job system** (`analysis_jobs` + worker +
+Redis queue), **run records** (`analysis_runs`) and the **audit log**.
 
 ---
 
@@ -227,19 +245,23 @@ job may end `partial` when registry metadata is incomplete. The analyzers in
 `analyzers/graph` and `analyzers/fragility` are pure; `collectors/registries`
 is the only new outbound connection. Details are in [phase5.md](phase5.md).
 
-**Target (later phases)** — the full pipeline extends the same job system
-with these stages, and pushes transitions over `/ws/projects/{project_id}`
-from Phase 9:
+**Phases 6 to 13** use the same job system, one job type per layer:
 
-```text
-QUEUED → CLONING → REPOSITORY_DISCOVERY → DEPENDENCY_DISCOVERY → SBOM_ANALYSIS
-→ GRAPH_BUILDING → VULNERABILITY_ANALYSIS → REACHABILITY_ANALYSIS
-→ BEHAVIOUR_ANALYSIS → PREDICTION → AI_REASONING → TRUST_SCORE
-→ REPORT_GENERATION → COMPLETED        (any stage may end in FAILED)
-```
+| Job type | Stages | Reads | Writes |
+|---|---|---|---|
+| `attack_path_analysis` | load evidence → search → score → store | graph, matches, reachability findings, Phase 5 rows | `analysis_runs`, `attack_paths` |
+| `maintainer_analysis` | collect history → measure → indicators → store | GitHub commits, contributors, releases; commit analyses | `analysis_runs`, `maintainer_profiles`, `maintainers` |
+| `commit_behaviour_analysis` | list commits → read diffs → rules → baseline → score → store | GitHub commit list and details; earlier analyses | `analysis_runs`, `commits`, `commit_analysis`, `behaviour_events`, `security_events` |
+| `ai_security_analysis` | gather context → rules → validate → explain → store | `layers.collect` | `analysis_runs`, `ai_findings` |
+| `dataset_validation` | build records → hash → store version → read back → validate | stored results of the snapshot | `datasets`, `dataset_records`, `dataset_quality` |
+| `trust_analysis` | collect layers → normalise → compute → explain → store | `layers.collect` | `trust_scores` |
 
-Each stage writes its own collection(s) keyed by `project_id` and
-`snapshot_id`, so a stage can be re-run and a failed job can resume.
+There is no single pipeline job: each layer is started on its own, in any
+order its prerequisites allow, and a later layer reports an earlier one that
+has not run as unknown. One job runs per project at a time. A job that could
+collect only part of its input ends `partial` and says what is missing.
+Overview and report are computed on request from stored results. Progress is
+polled; there is no WebSocket channel.
 
 ---
 
@@ -267,8 +289,12 @@ repository code on the host.
 | Rate limit on job starts and provider health checks | `security/rate_limit.py` | BUILT (in-process) |
 | SBOM integrity — canonical form, SHA-256 digests, regeneration check. Integrity-verifiable, not signed | `sbom/canonical.py`, `services/sbom.py` | BUILT |
 | Source analysis without execution — files fetched by validated blob id, parsed with `ast`; bounded files, bytes, syntax nodes, lookups, edges and run time | `analyzers/source/`, `analyzers/reachability/`, `services/reachability.py` | BUILT |
-| Sandboxed execution of repository code | — | Not needed so far: no phase executes repository code. Required before any that does |
-| WebSocket authentication | `websocket/` | PLANNED (Phase 9) |
+| GitHub API host allow-list; outbound hosts must be public names, never addresses or internal names; placeholder token never sent | `config/settings.py` | BUILT (Phase 13) |
+| Commit diffs analysed as text; secret-like values masked before storage | `analyzers/behavior/` | BUILT |
+| Findings and report statements refused unless every statement cites stored evidence | `ai/evidence.py`, `services/report.py` | BUILT |
+| Dataset records write-once with SHA-256 record, dataset and chain hashes | `analyzers/dataset/integrity.py` | BUILT (verifiable, not signed) |
+| Reproducible frontend build from a committed lockfile with integrity hashes | `frontend/Dockerfile`, `package-lock.json` | BUILT |
+| Sandboxed execution of repository code | — | Not needed: no phase executes repository code |
 
 Full control list: [security.md](security.md).
 
@@ -276,7 +302,7 @@ Full control list: [security.md](security.md).
 
 - The rate limiter keeps its counters in process memory. With more than one
   backend process each process counts separately. Moving the counters to
-  Redis is scheduled for Phase 14.
+  Redis is not built.
 - Tokens are stateless; there is no server-side revocation list yet. Tokens
   are short-lived (60 minutes by default) to bound this.
 - The frontend stores the token in `sessionStorage`. That limits lifetime to
@@ -285,30 +311,42 @@ Full control list: [security.md](security.md).
 
 ---
 
-## 7. AI boundary (PLANNED, Phase 10)
+## 7. AI boundary (BUILT, Phase 9)
 
-| Deterministic code | AI |
+| Deterministic code | Reasoning layer |
 |---|---|
-| dependency discovery, SBOM parsing, graph construction, vulnerability matching, score calculation, hashing, duplicate detection | cross-layer reasoning, explanation, evidence correlation, summarisation, remediation recommendations |
+| dependency discovery, SBOM generation, graph construction, vulnerability matching, reachability, every score, hashing, duplicate detection | cross-layer correlation, explanation, recommendations |
 
-The AI receives a structured evidence bundle in which every item has a stable
-id. It must return structured findings whose `evidence` entries are ids from
-that bundle. A validator rejects any finding that cites an id that was not
-supplied, so the model cannot introduce evidence. Each statement is labelled
-`OBSERVED`, `PREDICTED`, `INFERRED` or `RECOMMENDED`.
+The reasoning layer that ships is itself deterministic: a fixed set of rules
+over an evidence store in which every item has a stable id and points at a
+stored record. A finding's statements cite evidence ids; a validator refuses
+any finding with an uncited statement, a citation that does not resolve, or
+an `OBSERVED` statement resting on evidence that is not observed. Statements
+are labelled `OBSERVED`, `DERIVED`, `PREDICTED` or `RECOMMENDED`.
+
+A provider interface exists so that a language model could phrase
+explanations. It would receive only one finding's statements and cited
+evidence, and its output would be kept only if a guard accepts it (every
+sentence cited, citations within the finding, no claim the platform never
+makes). **No language-model provider is implemented**; `AI_PROVIDER` accepts
+`deterministic` only. Details: [phase9.md](phase9.md).
 
 ---
 
 ## 8. Scientific constraints
 
 The platform **estimates, ranks, simulates and flags indicators**. It does not
-claim to detect all zero-days, to know whether a maintainer is malicious, to
-guarantee future CVE prediction, to guarantee attack success, or to certify a
-dataset as free of poisoning. Every model ships with documented features,
-formulas, baseline, metrics and limitations. The Phase 5 models are
-deterministic weighted sums documented in [phase5.md](phase5.md); nothing is
-trained yet, and a trained model would add `docs/ml.md` with its training
-process and evaluation.
+claim to detect or predict zero-days, to decide exploitability, to confirm
+that an attack path would succeed, to identify a malicious maintainer, to
+predict future CVEs, or to certify a dataset as free of poisoning.
+
+Every model is a deterministic, documented formula with a version string:
+`attack-path-v1`, `maintainer-behaviour-v1`, `commit-behaviour-v1`,
+`cross-layer-reasoning-v1`, `dataset-quality-v1`, `trust-v1`, and the Phase 5
+models. Nothing is trained. The trust weights are expert-defined initial
+weights and are not statistically trained. No component has been evaluated
+for accuracy; measures without a benchmark are reported as NOT EVALUATED.
+See [research-validation.md](research-validation.md).
 
 ---
 
@@ -317,13 +355,13 @@ process and evaluation.
 | # | Risk | Impact | Mitigation |
 |---|---|---|---|
 | R1 | GitHub API rate limits (60 req/h unauthenticated) | Collection stalls | Optional `GITHUB_TOKEN`; conditional requests; cache per snapshot; back-off |
-| R2 | Cloning hostile or huge repositories | Resource exhaustion, code execution | Shallow clone in a sandbox container, size and time limits, never execute repo code |
+| R2 | Hostile or huge repositories | Resource exhaustion, code execution | Built: no clone; files, commits and diffs fetched as data through the GitHub API with size, count and time limits; nothing from a repository is executed |
 | R3 | Resolving transitive dependencies without running package managers | Incomplete graphs | Prefer lockfiles; otherwise resolve via registry metadata APIs and mark the result `resolution: estimated` |
 | R4 | Vulnerability sources disagree | Wrong matches | One source (OSV) is built, behind a provider interface; source, timestamp and raw record are kept per advisory, and a disagreement between the provider's report and the local range evaluation is stored as `CONFLICT`. Further sources: planned |
 | R5 | Static reachability is undecidable in general | False confidence | Built: four statuses (`REACHABLE` / `NOT_CONFIRMED_REACHABLE` / `UNKNOWN` / `UNSUPPORTED`), no "not reachable" or "safe" result, unresolved uses recorded, confidence tied to how each edge was bound. Precision not yet measured against a benchmark |
 | R10 | Advisories rarely publish affected functions (none of 11,584 PyPI entries examined did) | Most real Python findings are `UNKNOWN` | Operator mapping file with required source URL; dependency-usage evidence shown for every finding; no symbol is inferred from advisory text |
-| R6 | No labelled ground truth for "risky dependency" or "anomalous maintainer" | Unevaluable models | Start with transparent scoring; build labelled sets from historical advisories and known incidents; report baselines and limits |
-| R7 | LLM hallucination | Invented evidence | Evidence-id grounding validator; measure hallucination rate |
-| R8 | Trust-score weights are judgement calls | Arbitrary scores | Weights configurable and published; component scores always shown; controlled experiments in evaluation |
+| R6 | No labelled ground truth for "risky dependency" or "anomalous commit" | Unevaluable models | Built: transparent scoring, metric functions and an evaluation catalogue. Labelled sets and baselines: not built; every accuracy measure is NOT EVALUATED |
+| R7 | A reasoning provider inventing evidence | Unsupported claims | Built: evidence-id validation of every finding and a guard for provider output. No language model is integrated, so no hallucination rate exists to report; the guard does not yet check sentence content against the cited evidence |
+| R8 | Trust-score weights are judgement calls | Arbitrary scores | Built: weights published with the statement that they are not statistically trained; component risks, contributions, coverage and bounds always shown; no score below a coverage minimum. Sensitivity analysis: not done |
 | R9 | Multi-language scope (9 languages) | Shallow coverage | Adapter interface; lockfile-first; state per-ecosystem support level in docs |
 | R10 | Secrets in configuration | Credential leak | Env-only secrets, `.env` git-ignored, `.env.example` has placeholders only |

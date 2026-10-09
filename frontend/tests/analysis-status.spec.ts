@@ -12,8 +12,13 @@ test.describe("analysis status on the project page", () => {
     await expect(status.getByRole("button", { name: "Run dependency analysis" })).toBeEnabled();
     await expect(page.getByRole("region", { name: "Repository snapshot" })).toHaveCount(0);
     await expect(page.getByRole("region", { name: "Dependencies" })).toHaveCount(0);
-    await expect(page.getByText("Trust score and security report")).toBeVisible();
-    await expect(page.getByText("Phase 12 · not built")).toBeVisible();
+    // The trust score exists as a layer now; the page links to it and states that an unanalysed layer is unknown.
+    const layers = page.getByTestId("layer-links");
+    await expect(layers.getByRole("link", { name: "Trust score" })).toBeVisible();
+    await expect(layers).toContainText("shows INSUFFICIENT DATA until enough has been analysed");
+    await expect(layers).toContainText("is unknown, never a clean result");
+    await expect(layers.getByText("Not scheduled · not built").first()).toBeVisible();
+    await expect(layers).toContainText("Out of scope · static analysis only");
     await expect(page.locator("main")).not.toContainText(/CVE-|vulnerabilities found|risk score:/i);
   });
 

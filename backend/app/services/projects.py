@@ -167,7 +167,11 @@ def delete_project(db: Database, owner_id: ObjectId, project_id: str) -> bool:
     result = db[PROJECTS].delete_one({"_id": ObjectId(project_id), "owner_id": owner_id})
     if result.deleted_count == 1:
         # Local import: the analysis service depends on this module.
-        from app.services import intelligence, reachability, sbom, vulnerabilities
+        from app.models.collections import ANALYSIS_RUNS
+        from app.services import (
+            attack_paths, behaviour, datasets, intelligence, maintainers, reachability, reasoning, sbom, trust_service,
+            vulnerabilities,
+        )
         from app.services.analysis import delete_project_analysis
 
         delete_project_analysis(db, ObjectId(project_id))
@@ -175,6 +179,13 @@ def delete_project(db: Database, owner_id: ObjectId, project_id: str) -> bool:
         sbom.delete_project_data(db, ObjectId(project_id))
         reachability.delete_project_data(db, ObjectId(project_id))
         intelligence.delete_project_data(db, ObjectId(project_id))
+        attack_paths.delete_project_data(db, ObjectId(project_id))
+        maintainers.delete_project_data(db, ObjectId(project_id))
+        behaviour.delete_project_data(db, ObjectId(project_id))
+        datasets.delete_project_data(db, ObjectId(project_id))
+        reasoning.delete_project_data(db, ObjectId(project_id))
+        trust_service.delete_project_data(db, ObjectId(project_id))
+        db[ANALYSIS_RUNS].delete_many({"project_id": ObjectId(project_id)})
     return result.deleted_count == 1
 
 

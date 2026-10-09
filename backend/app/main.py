@@ -14,7 +14,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
-from app.api import analysis, auth, dashboard, health, intelligence, jobs, projects, reachability, sbom, vulnerabilities
+from app.api import (
+    analysis, attack_paths, auth, behaviour, dashboard, datasets, health, intelligence, jobs, maintainers, overview, projects, reachability, reasoning,
+    sbom, trust, vulnerabilities,
+)
 from app.collectors.github import GitHubClient
 from app.collectors.providers import build_providers
 from app.collectors.registries import build_registries
@@ -118,6 +121,13 @@ def create_app(
     app.include_router(sbom.router)
     app.include_router(reachability.router)
     app.include_router(intelligence.router)
+    app.include_router(attack_paths.router)
+    app.include_router(maintainers.router)
+    app.include_router(behaviour.router)
+    app.include_router(datasets.router)
+    app.include_router(reasoning.router)
+    app.include_router(trust.router)
+    app.include_router(overview.router)
     app.include_router(dashboard.router)
     return app
 

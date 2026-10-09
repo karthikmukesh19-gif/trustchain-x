@@ -10,6 +10,9 @@ Safety properties:
   type-checked and length-limited before use.
 * File contents are verified against the git blob id from the file listing.
 * Nothing is written to disk and nothing from the repository is executed.
+* Commit history, contributors, releases and diffs are read as metadata and
+  text. Author e-mail addresses are never kept: only a truncated hash is, so
+  that commits by the same address can be grouped.
 """
 
 from __future__ import annotations
@@ -109,6 +112,38 @@ def git_blob_id(content: bytes, sha256: bool = False) -> str:
     digest = hashlib.sha256() if sha256 else hashlib.sha1()  # noqa: S324 - git object ids, not a security control
     digest.update(b"blob " + str(len(content)).encode() + b"\x00" + content)
     return digest.hexdigest()
+
+
+def _person(value: Any) -> dict[str, Any]:
+    """Name, date and a one-way e-mail tag from a git author or committer block."""
+    value = value if isinstance(value, dict) else {}
+    email = value.get("email")
+    tag = hashlib.sha256(email.strip().lower().encode()).hexdigest()[:16] if isinstance(email, str) and email.strip() else None
+    return {"name": _text(value.get("name"), 100), "at": _time(value.get("date")), "email_tag": tag}
+
+
+def _login(value: Any) -> str | None:
+    login = value.get("login") if isinstance(value, dict) else None
+    return login[:100] if isinstance(login, str) and re.fullmatch(r"[A-Za-z0-9\[\]-]{1,100}", login) else None
+
+
+def parse_commit_summary(payload: Any) -> dict[str, Any] | None:
+    """One entry of the commit list. Returns None when it is not a usable commit record."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("sha"), str) or not _HEX.match(payload["sha"]):
+        return None
+    commit = payload.get("commit") if isinstance(payload.get("commit"), dict) else {}
+    author, committer = _person(commit.get("author")), _person(commit.get("committer"))
+    message = commit.get("message") if isinstance(commit.get("message"), str) else ""
+    verification = commit.get("verification") if isinstance(commit.get("verification"), dict) else {}
+    parents = payload.get("parents") if isinstance(payload.get("parents"), list) else []
+    author_account = payload.get("author") if isinstance(payload.get("author"), dict) else {}
+    return {
+        "sha": payload["sha"], "author_login": _login(payload.get("author")), "committer_login": _login(payload.get("committer")),
+        "author_type": _text(author_account.get("type"), 20),
+        "author_name": author["name"], "author_email_tag": author["email_tag"], "authored_at": author["at"],
+        "committed_at": committer["at"] or author["at"], "message": _text(message.splitlines()[0] if message else None, 200),
+        "parent_count": len(parents), "verified": _flag(verification.get("verified")),
+    }
 
 
 @dataclass
@@ -259,6 +294,90 @@ class GitHubSession:
         if git_blob_id(content, sha256=len(sha) == 64) != sha:
             raise GitHubUnavailable("File content does not match its git object id", "INTEGRITY_MISMATCH")
         return content
+
+
+    # -- history, contributors and releases (metadata only) -----------------------
+
+    def _pages(self, path: str, limit: int, params: dict[str, str] | None = None, per_page: int = 100) -> tuple[list[Any], bool]:
+        """Items of a paginated list endpoint, up to `limit`. Returns (items, truncated)."""
+        items: list[Any] = []
+        page = 1
+        while len(items) < limit:
+            payload = self._get(path, params={**(params or {}), "per_page": str(per_page), "page": str(page)})
+            if not isinstance(payload, list):
+                raise GitHubUnavailable("GitHub returned an unexpected list response", "BAD_RESPONSE")
+            items.extend(payload)
+            if len(payload) < per_page:
+                return items[:limit], len(items) > limit
+            page += 1
+        return items[:limit], True
+
+    def commits(self, ref: RepositoryRef, limit: int, branch: str | None = None) -> dict[str, Any]:
+        """The newest commits of a branch (the default branch when none is given), newest first."""
+        params = {}
+        if branch is not None:
+            if not _BRANCH.match(branch) or ".." in branch:
+                raise GitHubUnavailable("The branch has an unsupported name", "BAD_RESPONSE")
+            params["sha"] = branch
+        raw, truncated = self._pages(f"/repos/{ref.owner}/{ref.name}/commits", limit, params)
+        parsed = [parse_commit_summary(item) for item in raw]
+        return {"commits": [item for item in parsed if item is not None], "truncated": truncated,
+                "rejected": sum(1 for item in parsed if item is None)}
+
+    def contributors(self, ref: RepositoryRef, limit: int = 300) -> dict[str, Any]:
+        """Accounts GitHub lists as contributors, with their contribution counts."""
+        raw, truncated = self._pages(f"/repos/{ref.owner}/{ref.name}/contributors", limit)
+        people = []
+        for item in raw:
+            login, count = _login(item), _count(item.get("contributions")) if isinstance(item, dict) else None
+            if login is not None and count is not None:
+                people.append({"login": login, "contributions": count, "type": _text(item.get("type"), 20)})
+        return {"contributors": people, "truncated": truncated}
+
+    def releases(self, ref: RepositoryRef, limit: int) -> dict[str, Any]:
+        """Published releases, newest first. Drafts are left out."""
+        if limit <= 0:
+            return {"releases": [], "truncated": False}
+        raw, truncated = self._pages(f"/repos/{ref.owner}/{ref.name}/releases", limit)
+        releases = []
+        for item in raw:
+            if not isinstance(item, dict) or item.get("draft") is True:
+                continue
+            published = _time(item.get("published_at")) or _time(item.get("created_at"))
+            if published is None:
+                continue
+            releases.append({"tag": _text(item.get("tag_name"), 100), "published_at": published, "author_login": _login(item.get("author")),
+                             "prerelease": item.get("prerelease") is True})
+        return {"releases": releases, "truncated": truncated}
+
+    def commit_detail(self, ref: RepositoryRef, sha: str, max_files: int, max_patch_bytes: int) -> dict[str, Any]:
+        """One commit with the files it changed and their diff text. The diff is data; nothing in it is executed."""
+        if not _HEX.match(sha):
+            raise GitHubUnavailable("Invalid commit id", "BAD_RESPONSE")
+        payload = self._get(f"/repos/{ref.owner}/{ref.name}/commits/{sha}")
+        summary = parse_commit_summary(payload)
+        if summary is None or summary["sha"] != sha:
+            raise GitHubUnavailable("GitHub returned an unexpected commit response", "BAD_RESPONSE")
+        stats = payload.get("stats") if isinstance(payload.get("stats"), dict) else {}
+        listed = payload.get("files") if isinstance(payload.get("files"), list) else []
+        files = []
+        rejected = 0
+        for item in listed[:max_files]:
+            path = item.get("filename") if isinstance(item, dict) else None
+            if not safe_repository_path(path):
+                rejected += 1
+                continue
+            patch = item.get("patch") if isinstance(item.get("patch"), str) else None
+            oversized = patch is not None and len(patch.encode("utf-8", "replace")) > max_patch_bytes
+            previous = item.get("previous_filename")
+            files.append({
+                "path": path, "status": _text(item.get("status"), 20) or "modified", "additions": _count(item.get("additions")) or 0,
+                "deletions": _count(item.get("deletions")) or 0, "previous_path": previous if safe_repository_path(previous) else None,
+                "patch": patch.encode("utf-8", "replace")[:max_patch_bytes].decode("utf-8", "ignore") if patch is not None else None,
+                "patch_truncated": oversized, "patch_available": patch is not None,
+            })
+        return {**summary, "additions": _count(stats.get("additions")), "deletions": _count(stats.get("deletions")),
+                "files": files, "files_listed": len(listed), "files_truncated": len(listed) > max_files, "rejected_paths": rejected}
 
 
 @dataclass

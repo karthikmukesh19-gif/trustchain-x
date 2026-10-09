@@ -233,7 +233,7 @@ def test_all_declared_collections_have_indexes(client, db):
     # + source_files, source_symbols, code_edges and reachability_analyses (Phase 4)
     # + dependency_analyses, dependency_fragility, dependency_health, graph_risk_analysis, predictive_indicators
     #   and package_metadata (Phase 5)
-    assert len(ALL_COLLECTIONS) == 41
+    assert len(ALL_COLLECTIONS) == 42
     for name in ALL_COLLECTIONS:
         assert len(db[name].index_information()) == len(INDEXES[name]) + 1  # + the _id index
 

@@ -84,6 +84,8 @@ export interface DashboardSummary {
   registrations_by_day: { date: string; projects: number }[];
   recent_projects: Project[];
   recent_activity: ActivityEvent[];
+  /** Each project's current trust result. Score fields are present only when a score was calculated. */
+  trust: import("./platformTypes").DashboardTrust[];
 }
 
 export interface Readiness {
@@ -312,7 +314,8 @@ export interface DependencyGraphData {
 
 export type JobType =
   | "dependencies" | "vulnerability_sync" | "vulnerability_analysis" | "sbom_generation" | "code_reachability_analysis"
-  | "dependency_fragility_analysis" | "graph_risk_analysis" | "predictive_dependency_analysis";
+  | "dependency_fragility_analysis" | "graph_risk_analysis" | "predictive_dependency_analysis"
+  | "attack_path_analysis" | "maintainer_analysis" | "commit_behaviour_analysis" | "ai_security_analysis" | "dataset_validation" | "trust_analysis";
 
 /** A background job of any type, as returned by /jobs. */
 export interface ProjectJob {
